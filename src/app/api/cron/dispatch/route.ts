@@ -6,33 +6,78 @@ import {
 } from "@/server/message-engine";
 import { env } from "@/env";
 
-// Verify cron secret to ensure only Vercel cron can trigger this
-function verifyCronSecret(request: NextRequest): boolean {
-  const authHeader = request.headers.get("authorization");
+/**
+ * Cron Dispatch Endpoint for External Cron Services
+ * 
+ * SETUP INSTRUCTIONS FOR CRON-JOB.ORG:
+ * 
+ * 1. Go to https://cron-job.org and create an account
+ * 2. Create a new cron job with these settings:
+ *    - Title: "RehabFlow Message Dispatch"
+ *    - URL: https://YOUR-APP.vercel.app/api/cron/dispatch?token=YOUR_CRON_SECRET
+ *    - Schedule: Every 5 minutes
+ *    - Cron expression: 0,5,10,15,20,25,30,35,40,45,50,55 * * * *
+ *    - Timezone: Your clinic's timezone
+ *    - HTTP Method: GET
+ *    - Retry on failure: Yes (3 retries)
+ * 
+ * 3. Replace YOUR-APP with your actual Vercel app name
+ * 4. Replace YOUR_CRON_SECRET with the value from your .env.local CRON_SECRET
+ * 
+ * EXAMPLE URL:
+ * https://rehabflow-abc123.vercel.app/api/cron/dispatch?token=your-secret-here
+ * 
+ * SECURITY NOTES:
+ * - Keep your CRON_SECRET secure and unique
+ * - This endpoint is idempotent - safe to run multiple times per minute
+ * - All operations check message_logs to prevent duplicate sends
+ * - Rate limiting is built into the message engine
+ */
+
+// Verify cron token from query parameter for external cron services
+function verifyCronToken(request: NextRequest): boolean {
+  const { searchParams } = new URL(request.url);
+  const token = searchParams.get('token');
   const cronSecret = env.CRON_SECRET;
   
   if (!cronSecret) {
-    console.warn("CRON_SECRET not configured - allowing request in development");
+    console.warn("CRON_SECRET not configured - allowing request in development only");
     return process.env.NODE_ENV === "development";
   }
   
-  return authHeader === `Bearer ${cronSecret}`;
+  if (!token) {
+    console.error("No token provided in query parameters");
+    return false;
+  }
+  
+  // Simple token comparison (HMAC could be added for production)
+  const isValid = token === cronSecret;
+  
+  if (!isValid) {
+    console.error("Invalid cron token provided");
+  }
+  
+  return isValid;
 }
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   
   try {
-    // Verify authorization
-    if (!verifyCronSecret(request)) {
-      console.error("Unauthorized cron request");
+    // Verify authorization via token query parameter
+    if (!verifyCronToken(request)) {
+      console.error("Unauthorized cron request - invalid or missing token");
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { 
+          error: "Unauthorized", 
+          message: "Invalid or missing token parameter",
+          hint: "Use ?token=YOUR_CRON_SECRET in the URL"
+        },
         { status: 401 }
       );
     }
 
-    console.log("🕐 Cron job triggered:", new Date().toISOString());
+    console.log("🕐 External cron job triggered:", new Date().toISOString());
 
     // Get current engine status
     const engineStatus = await getMessageEngineStatus();
@@ -63,6 +108,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Step 2: Process due reminders (including no-show recovery messages)
+    // Note: This is idempotent - message_logs unique constraints prevent duplicate sends
     let dispatchResult = null;
     if (engineStatus.total_pending > 0) {
       console.log(`🚀 Processing ${engineStatus.total_pending} due reminders...`);
@@ -86,12 +132,13 @@ export async function GET(request: NextRequest) {
       engine_status: engineStatus,
       no_show_result: noShowResult,
       dispatch_result: dispatchResult,
-      message: `No-shows: ${noShowResult.marked} marked${noShowResult.errors.length > 0 ? ` (${noShowResult.errors.length} errors)` : ''}. Messages: ${dispatchResult ? `${dispatchResult.processed} processed${dispatchResult.errors.length > 0 ? ` (${noShowResult.errors.length} errors)` : ''}` : '0 processed'}`
+      message: `No-shows: ${noShowResult.marked} marked${noShowResult.errors.length > 0 ? ` (${noShowResult.errors.length} errors)` : ''}. Messages: ${dispatchResult ? `${dispatchResult.processed} processed${dispatchResult.errors.length > 0 ? ` (${dispatchResult.errors.length} errors)` : ''}` : '0 processed'}`,
+      idempotency_note: "This endpoint is safe to call multiple times per minute - duplicate sends are prevented by message_logs unique constraints"
     });
 
   } catch (error) {
     const executionTime = Date.now() - startTime;
-    console.error("💥 Cron job failed:", error);
+    console.error("💥 External cron job failed:", error);
     
     return NextResponse.json({
       success: false,
@@ -102,12 +149,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Optional: Allow POST for manual testing
+// Optional: Allow POST for manual testing (still requires token)
 export async function POST(request: NextRequest) {
-  // Only allow in development or with proper auth
-  if (process.env.NODE_ENV === "production" && !verifyCronSecret(request)) {
+  // Verify token for POST requests too
+  if (!verifyCronToken(request)) {
     return NextResponse.json(
-      { error: "Unauthorized" },
+      { 
+        error: "Unauthorized", 
+        message: "Invalid or missing token parameter",
+        hint: "Use ?token=YOUR_CRON_SECRET in the URL"
+      },
       { status: 401 }
     );
   }
@@ -149,7 +200,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Health check endpoint
+// Health check endpoint (no token required for monitoring)
 export async function HEAD() {
   try {
     const status = await getMessageEngineStatus();
