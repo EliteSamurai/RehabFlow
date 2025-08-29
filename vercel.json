@@ -1,0 +1,13 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/dispatch",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/cron/dispatch/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+set -e
+
+# fail commit if lint fails
+pnpm -s run lint
+
+# only run tests if a test script exists (won't error on "Missing script")
+pnpm -s run --if-present test

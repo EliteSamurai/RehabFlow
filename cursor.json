@@ -1,0 +1,11 @@
+{
+    "paths": {
+    "src/app/api/**": {"notes": "Use Next 14 Route Handlers, Zod, return typed JSON."},
+    "src/server/**": {"notes": "No client imports. RLS aware queries. No any."}
+    },
+    "style": {
+    "typescript": {"noAny": true, "preferTypeImport": true},
+    "react": {"serverComponents": true}
+    },
+    "tests": {"require": ["unit", "e2e smoke"]}
+    }
