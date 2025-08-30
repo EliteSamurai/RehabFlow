@@ -1,9 +1,9 @@
 "use server";
 
-import { stripe } from './stripe';
-import { supabaseServer } from '@/server/supabase';
-import { BILLING_PLANS, type BillingPlan } from './stripe';
-import { env } from '@/env';
+import { stripe } from "./stripe";
+import { supabaseServer } from "@/server/supabase";
+import { BILLING_PLANS, type BillingPlan } from "./stripe";
+import { env } from "@/env";
 
 // Create Stripe Checkout session
 export async function createCheckoutSession(
@@ -13,18 +13,18 @@ export async function createCheckoutSession(
 ) {
   try {
     const user = await getUser();
-    if (!user?.clinic_id) {
-      throw new Error('User not associated with a clinic');
+    if (!user?.user_metadata?.clinic_id) {
+      throw new Error("User not associated with a clinic");
     }
 
     const plan = BILLING_PLANS[planId];
     if (!plan) {
-      throw new Error('Invalid plan selected');
+      throw new Error("Invalid plan selected");
     }
 
     // Create or get Stripe customer
     let customerId = await getStripeCustomerId(clinicId);
-    
+
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email,
@@ -34,7 +34,7 @@ export async function createCheckoutSession(
         },
       });
       customerId = customer.id;
-      
+
       // Store customer ID in database
       await updateClinicCustomerId(clinicId, customerId);
     }
@@ -42,14 +42,14 @@ export async function createCheckoutSession(
     // Create checkout session
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
-      payment_method_types: ['card'],
+      payment_method_types: ["card"],
       line_items: [
         {
           price: plan.id,
           quantity: 1,
         },
       ],
-      mode: 'subscription',
+      mode: "subscription",
       success_url: `${env.NEXT_PUBLIC_APP_URL}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${env.NEXT_PUBLIC_APP_URL}/billing?canceled=true`,
       subscription_data: {
@@ -67,8 +67,8 @@ export async function createCheckoutSession(
 
     return { sessionId: session.id, url: session.url };
   } catch (error) {
-    console.error('Error creating checkout session:', error);
-    throw new Error('Failed to create checkout session');
+    console.error("Error creating checkout session:", error);
+    throw new Error("Failed to create checkout session");
   }
 }
 
@@ -76,13 +76,16 @@ export async function createCheckoutSession(
 export async function createPortalSession(clinicId: string) {
   try {
     const user = await getUser();
-    if (!user?.clinic_id || user.clinic_id !== clinicId) {
-      throw new Error('Unauthorized');
+    if (
+      !user?.user_metadata?.clinic_id ||
+      user.user_metadata?.clinic_id !== clinicId
+    ) {
+      throw new Error("Unauthorized");
     }
 
     const customerId = await getStripeCustomerId(clinicId);
     if (!customerId) {
-      throw new Error('No subscription found');
+      throw new Error("No subscription found");
     }
 
     const session = await stripe.billingPortal.sessions.create({
@@ -92,8 +95,8 @@ export async function createPortalSession(clinicId: string) {
 
     return { url: session.url };
   } catch (error) {
-    console.error('Error creating portal session:', error);
-    throw new Error('Failed to create portal session');
+    console.error("Error creating portal session:", error);
+    throw new Error("Failed to create portal session");
   }
 }
 
@@ -101,20 +104,22 @@ export async function createPortalSession(clinicId: string) {
 export async function getClinicSubscription(clinicId: string) {
   try {
     const supabase = await supabaseServer();
-    
+
     const { data, error } = await supabase
-      .from('clinic_subscriptions')
-      .select(`
+      .from("clinic_subscriptions")
+      .select(
+        `
         *,
         subscription_plans (*)
-      `)
-      .eq('clinic_id', clinicId)
+      `
+      )
+      .eq("clinic_id", clinicId)
       .single();
 
     if (error) throw error;
     return data;
   } catch (error) {
-    console.error('Error getting clinic subscription:', error);
+    console.error("Error getting clinic subscription:", error);
     return null;
   }
 }
@@ -123,24 +128,25 @@ export async function getClinicSubscription(clinicId: string) {
 export async function getUsageData(clinicId: string) {
   try {
     const supabase = await supabaseServer();
-    
+
     // Get current subscription
     const subscription = await getClinicSubscription(clinicId);
     if (!subscription) return null;
 
     // Get SMS usage for current period
     const { data: smsUsage, error } = await supabase
-      .from('message_logs')
-      .select('id')
-      .eq('clinic_id', clinicId)
-      .eq('status', 'sent')
-      .gte('sent_at', subscription.current_period_start)
-      .lte('sent_at', subscription.current_period_end);
+      .from("message_logs")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("status", "sent")
+      .gte("sent_at", subscription.current_period_start)
+      .lte("sent_at", subscription.current_period_end);
 
     if (error) throw error;
 
     const smsSent = smsUsage?.length || 0;
-    const plan = BILLING_PLANS[subscription.subscription_plans?.name as BillingPlan];
+    const plan =
+      BILLING_PLANS[subscription.subscription_plans?.name as BillingPlan];
     const overage = Math.max(0, smsSent - (plan?.smsIncluded || 0));
     const overageCost = overage * 0.05; // $0.05 per SMS
 
@@ -162,7 +168,7 @@ export async function getUsageData(clinicId: string) {
       },
     };
   } catch (error) {
-    console.error('Error getting usage data:', error);
+    console.error("Error getting usage data:", error);
     return null;
   }
 }
@@ -170,28 +176,28 @@ export async function getUsageData(clinicId: string) {
 // Helper functions
 async function getUser() {
   const supabase = await supabaseServer();
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   return user;
 }
 
 async function getStripeCustomerId(clinicId: string): Promise<string | null> {
   const supabase = await supabaseServer();
   const { data } = await supabase
-    .from('clinic_subscriptions')
-    .select('customer_id')
-    .eq('clinic_id', clinicId)
+    .from("clinic_subscriptions")
+    .select("customer_id")
+    .eq("clinic_id", clinicId)
     .single();
-  
+
   return data?.customer_id || null;
 }
 
 async function updateClinicCustomerId(clinicId: string, customerId: string) {
   const supabase = await supabaseServer();
-  await supabase
-    .from('clinic_subscriptions')
-    .upsert({
-      clinic_id: clinicId,
-      customer_id: customerId,
-      status: 'incomplete',
-    });
+  await supabase.from("clinic_subscriptions").upsert({
+    clinic_id: clinicId,
+    customer_id: customerId,
+    status: "incomplete",
+  });
 }

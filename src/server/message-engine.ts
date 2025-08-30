@@ -69,7 +69,19 @@ export async function getDueAppointmentReminders(): Promise<DueReminder[]> {
     const dueReminders: DueReminder[] = [];
     const now = new Date();
 
-    for (const appointment of appointments || []) {
+    for (const appointment of (appointments as Array<{
+      id: string;
+      clinic_id: string;
+      patient_id: string;
+      scheduled_at: string;
+      patients: {
+        first_name: string;
+        last_name: string;
+        phone: string;
+        opt_in_sms: boolean;
+      };
+      clinics: { name: string; timezone: string };
+    }>) || []) {
       const scheduledAt = new Date(appointment.scheduled_at);
       const patient = appointment.patients;
       const clinic = appointment.clinics;
@@ -86,16 +98,10 @@ export async function getDueAppointmentReminders(): Promise<DueReminder[]> {
       // Determine which reminder window we're in
       if (hours <= 25 && hours > 23) {
         reminderType = "24h";
-        windowStart = 23;
-        windowEnd = 25;
       } else if (hours <= 4.5 && hours > 3.5) {
         reminderType = "4h";
-        windowStart = 3.5;
-        windowEnd = 4.5;
       } else if (hours <= 1.5 && hours > 0.5) {
         reminderType = "1h";
-        windowStart = 0.5;
-        windowEnd = 1.5;
       }
 
       if (!reminderType) continue;
@@ -221,7 +227,14 @@ export async function detectAndMarkNoShows(): Promise<{
     let marked = 0;
     const errors: Array<{ appointment_id: string; error: string }> = [];
 
-    for (const appointment of overdueAppointments) {
+    for (const appointment of (overdueAppointments as Array<{
+      id: string;
+      clinic_id: string;
+      patient_id: string;
+      scheduled_at: string;
+      patients: { first_name: string; last_name: string; phone: string; opt_in_sms: boolean };
+      clinics: { name: string };
+    }>) || []) {
       try {
         // Mark appointment as no-show
         const { error: updateError } = await supabase
@@ -456,10 +469,17 @@ async function advanceNoShowRecoveryStep(reminder: DueReminder): Promise<void> {
         // Advance to next step with appropriate delay
         let delayMinutes = 0;
         switch (currentStep) {
-          case 1: delayMinutes = 60; break;   // 1 hour
-          case 2: delayMinutes = 1440; break; // 24 hours
-          case 3: delayMinutes = 1440; break; // 24 hours
-          default: return;
+          case 1:
+            delayMinutes = 60;
+            break; // 1 hour
+          case 2:
+            delayMinutes = 1440;
+            break; // 24 hours
+          case 3:
+            delayMinutes = 1440;
+            break; // 24 hours
+          default:
+            return;
         }
 
         const nextMessageAt = new Date(Date.now() + delayMinutes * 60 * 1000);
@@ -580,10 +600,7 @@ export async function getMessageEngineStatus() {
   return withServiceRole(async (supabase) => {
     try {
       // Check database connectivity
-      const { error } = await supabase
-        .from("clinics")
-        .select("id")
-        .limit(1);
+      const { error } = await supabase.from("clinics").select("id").limit(1);
 
       if (error) throw error;
 
