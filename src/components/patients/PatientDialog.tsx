@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, SubmitHandler } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
   createPatientSchema,
@@ -41,6 +41,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
+import { Resolver } from "react-hook-form";
 
 interface PatientDialogProps {
   open: boolean;
@@ -58,8 +59,29 @@ export function PatientDialog({
   const [isLoading, setIsLoading] = useState(false);
   const isEdit = !!patient;
 
-  const form = useForm<CreatePatientInput | UpdatePatientInput>({
-    resolver: zodResolver(isEdit ? updatePatientSchema : createPatientSchema),
+  const createForm = useForm<CreatePatientInput>({
+    resolver: zodResolver(createPatientSchema) as Resolver<CreatePatientInput>,
+    defaultValues: {
+      first_name: "",
+      last_name: "",
+      email: "",
+      phone: "",
+      date_of_birth: "",
+      gender: "male" as const,
+      address: "",
+      emergency_contact: {},
+      primary_condition: "",
+      injury_date: "",
+      referral_source: "",
+      insurance_info: {},
+      goals: "",
+      opt_in_sms: true,
+      opt_in_email: true,
+    },
+  });
+
+  const updateForm = useForm<UpdatePatientInput>({
+    resolver: zodResolver(updatePatientSchema) as Resolver<UpdatePatientInput>,
     defaultValues: patient
       ? {
           id: patient.id,
@@ -98,24 +120,40 @@ export function PatientDialog({
         },
   });
 
-  const onSubmit = async (data: CreatePatientInput | UpdatePatientInput) => {
+  const handleCreateSubmit = async (data: CreatePatientInput) => {
     setIsLoading(true);
-
     try {
-      const result = isEdit
-        ? await updatePatient(patient!.id, data)
-        : await createPatient(data as CreatePatientInput);
-
+      const result = await createPatient(data);
       if (!result.success) {
-        toast.error(result.error || "Failed to save patient");
+        toast.error(result.error || "Failed to create patient");
       } else {
-        toast.success(
-          isEdit
-            ? "Patient updated successfully"
-            : "Patient created successfully"
-        );
+        toast.success("Patient created successfully");
         onOpenChange(false);
-        form.reset();
+        createForm.reset();
+        onSuccess?.();
+      }
+    } catch (error) {
+      console.error("Submission error:", error);
+      toast.error("An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUpdateSubmit = async (data: UpdatePatientInput) => {
+    setIsLoading(true);
+    try {
+      if (!patient?.id) {
+        toast.error("Patient ID is missing");
+        return;
+      }
+      const result = await updatePatient(patient.id, data);
+      if (!result.success) {
+        toast.error(result.error || "Failed to update patient");
+      } else {
+        toast.success("Patient updated successfully");
+        onOpenChange(false);
+        updateForm.reset();
         onSuccess?.();
       }
     } catch (error) {
@@ -140,8 +178,19 @@ export function PatientDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        <Form {...createForm}>
+          <form
+            onSubmit={
+              isEdit
+                ? updateForm.handleSubmit(
+                    handleUpdateSubmit as SubmitHandler<UpdatePatientInput>
+                  )
+                : createForm.handleSubmit(
+                    handleCreateSubmit as SubmitHandler<CreatePatientInput>
+                  )
+            }
+            className="space-y-6"
+          >
             <Tabs defaultValue="basic" className="w-full">
               <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="basic">Basic Info</TabsTrigger>
@@ -154,7 +203,7 @@ export function PatientDialog({
               <TabsContent value="basic" className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="first_name"
                     render={({ field }) => (
                       <FormItem>
@@ -167,7 +216,7 @@ export function PatientDialog({
                     )}
                   />
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="last_name"
                     render={({ field }) => (
                       <FormItem>
@@ -183,7 +232,7 @@ export function PatientDialog({
 
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="date_of_birth"
                     render={({ field }) => (
                       <FormItem>
@@ -196,7 +245,7 @@ export function PatientDialog({
                     )}
                   />
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="gender"
                     render={({ field }) => (
                       <FormItem>
@@ -226,7 +275,7 @@ export function PatientDialog({
                 </div>
 
                 <FormField
-                  control={form.control}
+                  control={isEdit ? updateForm.control : createForm.control}
                   name="address"
                   render={({ field }) => (
                     <FormItem>
@@ -247,7 +296,7 @@ export function PatientDialog({
               <TabsContent value="contact" className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="email"
                     render={({ field }) => (
                       <FormItem>
@@ -264,7 +313,7 @@ export function PatientDialog({
                     )}
                   />
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="phone"
                     render={({ field }) => (
                       <FormItem>
@@ -286,7 +335,7 @@ export function PatientDialog({
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="emergency_contact.name"
                       render={({ field }) => (
                         <FormItem>
@@ -299,7 +348,7 @@ export function PatientDialog({
                       )}
                     />
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="emergency_contact.phone"
                       render={({ field }) => (
                         <FormItem>
@@ -314,7 +363,7 @@ export function PatientDialog({
                   </div>
 
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="emergency_contact.relationship"
                     render={({ field }) => (
                       <FormItem>
@@ -335,7 +384,7 @@ export function PatientDialog({
               {/* Medical Information */}
               <TabsContent value="medical" className="space-y-4">
                 <FormField
-                  control={form.control}
+                  control={isEdit ? updateForm.control : createForm.control}
                   name="primary_condition"
                   render={({ field }) => (
                     <FormItem>
@@ -353,7 +402,7 @@ export function PatientDialog({
 
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="injury_date"
                     render={({ field }) => (
                       <FormItem>
@@ -366,7 +415,7 @@ export function PatientDialog({
                     )}
                   />
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="referral_source"
                     render={({ field }) => (
                       <FormItem>
@@ -387,7 +436,7 @@ export function PatientDialog({
                   <h4 className="text-sm font-medium">Insurance Information</h4>
 
                   <FormField
-                    control={form.control}
+                    control={isEdit ? updateForm.control : createForm.control}
                     name="insurance_info.provider"
                     render={({ field }) => (
                       <FormItem>
@@ -405,7 +454,7 @@ export function PatientDialog({
 
                   <div className="grid grid-cols-2 gap-4">
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="insurance_info.policy_number"
                       render={({ field }) => (
                         <FormItem>
@@ -418,7 +467,7 @@ export function PatientDialog({
                       )}
                     />
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="insurance_info.group_number"
                       render={({ field }) => (
                         <FormItem>
@@ -434,7 +483,7 @@ export function PatientDialog({
                 </div>
 
                 <FormField
-                  control={form.control}
+                  control={isEdit ? updateForm.control : createForm.control}
                   name="goals"
                   render={({ field }) => (
                     <FormItem>
@@ -461,7 +510,7 @@ export function PatientDialog({
 
                   <div className="space-y-3">
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="opt_in_sms"
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-start space-x-3 space-y-0">
@@ -483,7 +532,7 @@ export function PatientDialog({
                     />
 
                     <FormField
-                      control={form.control}
+                      control={isEdit ? updateForm.control : createForm.control}
                       name="opt_in_email"
                       render={({ field }) => (
                         <FormItem className="flex flex-row items-start space-x-3 space-y-0">

@@ -104,10 +104,23 @@ export default function PatientsPage() {
     loadPatients(newParams);
   };
 
-  const handleSort = (sortBy: string, sortOrder: "asc" | "desc") => {
+  const handleSort = (
+    sortBy: "created_at" | "first_name" | "last_name" | "primary_condition",
+    sortOrder: "asc" | "desc"
+  ) => {
     const newParams = { ...searchParams, sortBy, sortOrder, page: 1 };
     setSearchParams(newParams);
     loadPatients(newParams);
+  };
+
+  const handleSortChange = (sortBy: string, sortOrder: "asc" | "desc") => {
+    // Convert string to the specific type and call handleSort
+    const validSortBy = sortBy as
+      | "created_at"
+      | "first_name"
+      | "last_name"
+      | "primary_condition";
+    handleSort(validSortBy, sortOrder);
   };
 
   const handleFilter = (filters: Record<string, string | number>) => {
@@ -360,7 +373,7 @@ export default function PatientsPage() {
         data={paginatedData.patients}
         searchPlaceholder="Search patients by name, email, phone, or condition..."
         onSearchChange={handleSearch}
-        onSortChange={handleSort}
+        onSortChange={handleSortChange}
         onFilterChange={handleFilter}
         totalCount={paginatedData.totalCount}
         pageSize={paginatedData.pageSize}

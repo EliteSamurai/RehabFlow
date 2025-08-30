@@ -4,7 +4,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -12,90 +18,158 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
-import { MessageSquareIcon, SendIcon, CheckCircleIcon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Phone,
+  MessageSquare,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+} from "lucide-react";
+
+interface SMSResult {
+  success: boolean;
+  message: string;
+  data?: {
+    messageId?: string;
+    deliveryStatus?: string;
+    error?: string;
+  };
+}
 
 export default function TestSMSPage() {
-  const [isLoading, setIsLoading] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [testType, setTestType] = useState("welcome");
-  const [result, setResult] = useState<{ success: boolean; message: string; data?: unknown } | null>(null);
+  const [message, setMessage] = useState("");
+  const [testType, setTestType] = useState<"welcome" | "reminder" | "exercise">(
+    "welcome"
+  );
+  const [result, setResult] = useState<SMSResult | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const sendTestSMS = async () => {
-    if (!phoneNumber) {
-      toast.error("Please enter a phone number");
+  const testMessages = {
+    welcome: "Welcome to RehabFlow! You're all set to reduce no-shows 🚀",
+    reminder:
+      "Reminder: You have an appointment tomorrow at 2:00 PM. Reply CONFIRM to confirm.",
+    exercise:
+      "Time for your daily exercises! Complete your routine and reply DONE when finished.",
+  };
+
+  const handleSend = async () => {
+    if (!phoneNumber || !message) {
+      alert("Please enter both phone number and message");
       return;
     }
 
-    setIsLoading(true);
+    setLoading(true);
     setResult(null);
 
     try {
-      const response = await fetch("/api/twilio/send?test=true", {
+      const response = await fetch("/api/twilio/send", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           to: phoneNumber,
-          testType: testType,
+          message,
+          isTest: true,
+          testType,
         }),
       });
 
       const data = await response.json();
       setResult(data);
-
-      if (data.success) {
-        toast.success("Test SMS sent successfully!");
-      } else {
-        toast.error(data.error || "Failed to send SMS");
-      }
     } catch (error) {
-      toast.error("An unexpected error occurred");
-      console.error("SMS Test Error:", error);
+      setResult({
+        success: false,
+        message: "Failed to send SMS",
+        data: {
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+      });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
+    }
+  };
+
+  const handleQuickTest = async (type: "welcome" | "reminder" | "exercise") => {
+    setTestType(type);
+    setMessage(testMessages[type]);
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const response = await fetch("/api/twilio/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: phoneNumber,
+          message: testMessages[type],
+          isTest: true,
+          testType: type,
+        }),
+      });
+
+      const data = await response.json();
+      setResult(data);
+    } catch (error) {
+      setResult({
+        success: false,
+        message: "Failed to send test SMS",
+        data: {
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="container mx-auto py-6">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">SMS Testing</h1>
+    <div className="container mx-auto py-8 space-y-6">
+      <div className="text-center">
+        <h1 className="text-3xl font-bold">Test SMS Integration</h1>
         <p className="text-muted-foreground">
-          Test your SMS integration to ensure messages are being delivered
-          properly.
+          Test your Twilio SMS integration with sample messages
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* SMS Form */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center">
-              <MessageSquareIcon className="w-5 h-5 mr-2" />
-              Send Test Message
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5" />
+              Send Test SMS
             </CardTitle>
+            <CardDescription>
+              Test your SMS integration with custom or predefined messages
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="phoneNumber">Phone Number</Label>
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
               <Input
-                id="phoneNumber"
+                id="phone"
                 type="tel"
                 placeholder="+1234567890"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Include country code (e.g., +1 for US)
-              </p>
             </div>
 
-            <div>
-              <Label htmlFor="testType">Message Type</Label>
-              <Select value={testType} onValueChange={setTestType}>
+            <div className="space-y-2">
+              <Label htmlFor="testType">Test Type</Label>
+              <Select
+                value={testType}
+                onValueChange={(value: "welcome" | "reminder" | "exercise") =>
+                  setTestType(value)
+                }
+              >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select message type" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="welcome">Welcome Message</SelectItem>
@@ -105,110 +179,129 @@ export default function TestSMSPage() {
               </Select>
             </div>
 
+            <div className="space-y-2">
+              <Label htmlFor="message">Message</Label>
+              <textarea
+                id="message"
+                className="w-full min-h-[100px] p-3 border border-input rounded-md resize-none"
+                placeholder="Enter your message..."
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+              />
+            </div>
+
             <Button
-              onClick={sendTestSMS}
-              disabled={isLoading || !phoneNumber}
+              onClick={handleSend}
+              disabled={loading || !phoneNumber || !message}
               className="w-full"
             >
-              <SendIcon className="w-4 h-4 mr-2" />
-              {isLoading ? "Sending..." : "Send Test SMS"}
+              {loading ? "Sending..." : "Send SMS"}
             </Button>
           </CardContent>
         </Card>
 
+        {/* Quick Tests */}
         <Card>
           <CardHeader>
-            <CardTitle>Test Results</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Phone className="w-5 h-5" />
+              Quick Tests
+            </CardTitle>
+            <CardDescription>
+              Send predefined test messages to verify your integration
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            {result ? (
-              <div className="space-y-4">
-                <div className="flex items-center">
-                  <CheckCircleIcon
-                    className={`w-5 h-5 mr-2 ${
-                      result.success ? "text-green-500" : "text-red-500"
-                    }`}
-                  />
-                  <span
-                    className={`font-medium ${
-                      result.success ? "text-green-700" : "text-red-700"
-                    }`}
-                  >
-                    {result.success ? "Success" : "Failed"}
-                  </span>
-                </div>
+          <CardContent className="space-y-4">
+            <div className="space-y-3">
+              <Button
+                variant="outline"
+                onClick={() => handleQuickTest("welcome")}
+                disabled={loading || !phoneNumber}
+                className="w-full justify-start"
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Welcome Message
+              </Button>
 
-                {result.success && (
-                  <div className="space-y-2">
-                    <div>
-                      <span className="text-sm font-medium">Message ID:</span>
-                      <span className="text-sm text-muted-foreground ml-2">
-                        {result.messageId}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-sm font-medium">Status:</span>
-                      <span className="text-sm text-muted-foreground ml-2">
-                        {result.deliveryStatus}
-                      </span>
-                    </div>
-                  </div>
-                )}
+              <Button
+                variant="outline"
+                onClick={() => handleQuickTest("reminder")}
+                disabled={loading || !phoneNumber}
+                className="w-full justify-start"
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Appointment Reminder
+              </Button>
 
-                {result.error && (
-                  <div className="bg-red-50 border border-red-200 rounded p-3">
-                    <p className="text-sm text-red-700">{result.error}</p>
-                  </div>
-                )}
+              <Button
+                variant="outline"
+                onClick={() => handleQuickTest("exercise")}
+                disabled={loading || !phoneNumber}
+                className="w-full justify-start"
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Exercise Reminder
+              </Button>
+            </div>
 
-                <div className="bg-gray-50 border rounded p-3">
-                  <p className="text-xs font-medium text-gray-700 mb-2">
-                    Raw Response:
-                  </p>
-                  <pre className="text-xs text-gray-600 overflow-x-auto">
-                    {JSON.stringify(result, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <MessageSquareIcon className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-                <p>Send a test SMS to see results here</p>
-              </div>
-            )}
+            <div className="pt-4 border-t">
+              <p className="text-sm text-muted-foreground">
+                Make sure to enter a valid phone number before running quick
+                tests.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>SMS Configuration Status</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span>Twilio Account SID</span>
-              <span className="text-sm text-green-600">✓ Configured</span>
+      {/* Results */}
+      {result && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              {result.success ? (
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              ) : (
+                <XCircle className="w-5 h-5 text-red-600" />
+              )}
+              SMS Result
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Badge variant={result.success ? "default" : "destructive"}>
+                  {result.success ? "Success" : "Failed"}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  {new Date().toLocaleTimeString()}
+                </span>
+              </div>
+
+              <p className="text-sm">{result.message}</p>
+
+              {result.data?.messageId && (
+                <div className="text-sm">
+                  <strong>Message ID:</strong> {result.data.messageId}
+                </div>
+              )}
+
+              {result.data?.deliveryStatus && (
+                <div className="text-sm">
+                  <strong>Status:</strong> {result.data.deliveryStatus}
+                </div>
+              )}
+
+              {result.data?.error && (
+                <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <AlertCircle className="w-4 h-4 text-red-600" />
+                  <p className="text-sm text-red-700">{result.data.error}</p>
+                </div>
+              )}
             </div>
-            <div className="flex items-center justify-between">
-              <span>Twilio Auth Token</span>
-              <span className="text-sm text-green-600">✓ Configured</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Messaging Service</span>
-              <span className="text-sm text-green-600">✓ Configured</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span>Real SMS Mode</span>
-              <span className="text-sm text-yellow-600">
-                {process.env.NEXT_PUBLIC_ENABLE_REAL_SMS === "true"
-                  ? "✓ Enabled"
-                  : "⚠ Mock Mode"}
-              </span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

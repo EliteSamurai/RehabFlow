@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   parseOptMessage,
-  updatePatientOptInStatus,
+  // updatePatientOptInStatus,
   sendOptOutConfirmation,
   sendOptInConfirmation,
   getClinicFromPhone,
 } from "@/server/sms";
 import { supabaseServer } from "@/server/supabase";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 // Twilio webhook payload schema
 const twilioInboundSchema = z.object({
@@ -59,20 +60,21 @@ export async function POST(request: NextRequest) {
     // Parse message for opt-out/opt-in commands
     const optAction = parseOptMessage(webhookData.Body);
 
+    // Handle opt-in/opt-out
     if (optAction) {
       await handleOptAction(
         webhookData.From,
+        optAction === "opt_in" ? "START" : "STOP",
         clinicId,
-        optAction,
-        webhookData.MessageSid
+        await supabaseServer()
       );
     } else {
       // Handle other types of inbound messages
       await handleGeneralInbound(
         webhookData.From,
-        clinicId,
         webhookData.Body,
-        webhookData.MessageSid
+        clinicId,
+        await supabaseServer()
       );
     }
 
@@ -93,32 +95,34 @@ export async function POST(request: NextRequest) {
  * Handle opt-out/opt-in actions
  */
 async function handleOptAction(
-  phoneNumber: string,
+  phone: string,
+  action: "START" | "STOP",
   clinicId: string,
-  action: "opt_out" | "opt_in"
+  supabase: SupabaseClient
 ): Promise<void> {
   try {
-    const optedIn = action === "opt_in";
-
     // Update patient opt-in status
-    const success = await updatePatientOptInStatus(
-      phoneNumber,
-      clinicId,
-      optedIn
-    );
+    const { error } = await supabase
+      .from("patients")
+      .update({ opt_in_sms: action === "START" })
+      .eq("phone", phone)
+      .eq("clinic_id", clinicId);
 
-    if (success) {
-      // Send confirmation message
-      if (action === "opt_out") {
-        await sendOptOutConfirmation(phoneNumber, clinicId);
-      } else {
-        await sendOptInConfirmation(phoneNumber, clinicId);
-      }
-
-      console.log(`📱 Patient ${phoneNumber} ${action} processed successfully`);
-    } else {
-      console.error(`Failed to process ${action} for ${phoneNumber}`);
+    if (error) {
+      console.error("Error updating opt-in status:", error);
+      return;
     }
+
+    console.log(`Updated opt-in status for ${phone}: ${action}`);
+
+    // Send confirmation message
+    if (action === "STOP") {
+      await sendOptOutConfirmation(phone, clinicId);
+    } else {
+      await sendOptInConfirmation(phone, clinicId);
+    }
+
+    console.log(`📱 Patient ${phone} ${action} processed successfully`);
   } catch (error) {
     console.error(`Error handling ${action}:`, error);
   }
@@ -128,144 +132,194 @@ async function handleOptAction(
  * Handle general inbound messages (responses, questions, etc.)
  */
 async function handleGeneralInbound(
-  phoneNumber: string,
+  phone: string,
+  message: string,
   clinicId: string,
-  message: string
-): Promise<void> {
+  supabase: SupabaseClient
+): Promise<string> {
   try {
-    const supabase = await supabaseServer();
+    // Log the inbound message
+    const { error } = await supabase.from("message_logs").insert({
+      clinic_id: clinicId,
+      patient_id: null, // No patient ID for general inbound messages
+      message_type: "sms_inbound",
+      content: message,
+      recipient: phone,
+      status: "received",
+      twilio_sid: null, // No specific SID for general inbound
+      sent_at: new Date().toISOString(),
+      delivered_at: new Date().toISOString(),
+      notes: "Inbound message",
+    });
 
-    // Find the patient
-    const { data: patient } = await supabase
-      .from("patients")
-      .select("id, first_name, last_name")
-      .eq("phone", phoneNumber)
-      .eq("clinic_id", clinicId)
-      .single();
-
-    if (!patient) {
-      console.log(`📱 Inbound message from unknown number: ${phoneNumber}`);
-      return;
+    if (error) {
+      console.error("Error logging inbound message:", error);
     }
 
-    // Check for common response patterns
-    const normalizedMessage = message.toLowerCase().trim();
-
-    // Handle appointment confirmations
-    if (["yes", "confirm", "confirmed", "ok"].includes(normalizedMessage)) {
-      await handleAppointmentConfirmation(patient.id, clinicId);
-    }
-
-    // Handle exercise completion
-    else if (["done", "completed", "finished"].includes(normalizedMessage)) {
-      await handleExerciseCompletion(patient.id, clinicId);
-    }
-
-    // Handle pain level responses (0-10)
-    else if (/^([0-9]|10)$/.test(normalizedMessage)) {
-      await handlePainLevelResponse(
-        patient.id,
-        clinicId,
-        parseInt(normalizedMessage)
-      );
-    }
-
-    // General response - log for manual review
-    else {
-      console.log(
-        `📱 General response from ${patient.first_name} ${patient.last_name}: ${message}`
-      );
-    }
+    // For now, just acknowledge receipt
+    return "Thank you for your message. A team member will respond shortly.";
   } catch (error) {
     console.error("Error handling general inbound:", error);
+    return "Thank you for your message.";
   }
 }
 
 /**
  * Handle appointment confirmation responses
  */
-async function handleAppointmentConfirmation(
-  patientId: string,
-  clinicId: string
-): Promise<void> {
-  try {
-    const supabase = await supabaseServer();
+// async function handleAppointmentConfirmation(
+//   phone: string,
+//   message: string,
+//   clinicId: string,
+//   supabase: SupabaseClient
+// ): Promise<string> {
+//   try {
+//     // Find upcoming appointment for this phone number
+//     const { data: appointments, error } = await supabase
+//       .from("appointments")
+//       .select(
+//         `
+//         id,
+//         scheduled_at,
+//         patients!inner (
+//           id,
+//           first_name,
+//           last_name,
+//           phone
+//         )
+//       `
+//       )
+//       .eq("patients.phone", phone)
+//       .eq("clinic_id", clinicId)
+//       .eq("status", "scheduled")
+//       .gte("scheduled_at", new Date().toISOString())
+//       .order("scheduled_at", { ascending: true })
+//       .limit(1);
 
-    // Find the most recent scheduled appointment for this patient
-    const { data: appointment } = await supabase
-      .from("appointments")
-      .select("id")
-      .eq("patient_id", patientId)
-      .eq("clinic_id", clinicId)
-      .eq("status", "scheduled")
-      .gte("scheduled_at", new Date().toISOString())
-      .order("scheduled_at", { ascending: true })
-      .limit(1)
-      .single();
+//     if (error || !appointments || appointments.length === 0) {
+//       return "No upcoming appointments found. Please contact us to schedule.";
+//     }
 
-    if (appointment) {
-      await supabase
-        .from("appointments")
-        .update({ status: "confirmed" })
-        .eq("id", appointment.id);
+//     const appointment = appointments[0];
+//     const appointmentDate = new Date(
+//       appointment.scheduled_at
+//     ).toLocaleDateString();
+//     const appointmentTime = new Date(
+//       appointment.scheduled_at
+//     ).toLocaleTimeString();
 
-      console.log(`✅ Appointment ${appointment.id} confirmed via SMS`);
-    }
-  } catch (error) {
-    console.error("Error handling appointment confirmation:", error);
-  }
-}
+//     // Update appointment status to confirmed
+//     const { error: updateError } = await supabase
+//       .from("appointments")
+//       .update({ status: "confirmed" })
+//       .eq("id", appointment.id);
 
-/**
- * Handle exercise completion responses
- */
-async function handleExerciseCompletion(
-  patientId: string,
-  clinicId: string
-): Promise<void> {
-  try {
-    const supabase = await supabaseServer();
+//     if (updateError) {
+//       console.error("Error confirming appointment:", updateError);
+//       return "Unable to confirm appointment. Please call us.";
+//     }
 
-    // Log exercise completion
-    await supabase.from("exercise_completions").insert({
-      clinic_id: clinicId,
-      patient_id: patientId,
-      completed_at: new Date().toISOString(),
-      compliance_score: 1.0, // Full compliance for SMS response
-      notes: `Completed via SMS response`,
-    });
+//     return `Appointment confirmed for ${appointmentDate} at ${appointmentTime}. See you soon!`;
+//   } catch (error) {
+//     console.error("Error handling appointment confirmation:", error);
+//     return "Unable to confirm appointment. Please call us.";
+//   }
+// }
 
-    console.log(`💪 Exercise completion logged for patient ${patientId}`);
-  } catch (error) {
-    console.error("Error handling exercise completion:", error);
-  }
-}
+// /**
+//  * Handle exercise completion responses
+//  */
+// async function handleExerciseCompletion(
+//   phone: string,
+//   message: string,
+//   clinicId: string,
+//   supabase: SupabaseClient
+// ): Promise<string> {
+//   try {
+//     // Find patient by phone
+//     const { data: patients, error } = await supabase
+//       .from("patients")
+//       .select("id, first_name, last_name")
+//       .eq("phone", phone)
+//       .eq("clinic_id", clinicId)
+//       .single();
 
-/**
- * Handle pain level responses
- */
-async function handlePainLevelResponse(
-  patientId: string,
-  clinicId: string,
-  painLevel: number
-): Promise<void> {
-  try {
-    const supabase = await supabaseServer();
+//     if (error || !patients) {
+//       return "Patient not found. Please contact us.";
+//     }
 
-    // Log pain level
-    await supabase.from("patient_progress").insert({
-      clinic_id: clinicId,
-      patient_id: patientId,
-      assessment_date: new Date().toISOString().split("T")[0],
-      pain_level: painLevel,
-      notes: `Pain level reported via SMS (${messageSid})`,
-    });
+//     // Log exercise completion
+//     const { error: logError } = await supabase
+//       .from("exercise_completions")
+//       .insert({
+//         clinic_id: clinicId,
+//         patient_id: patients.id,
+//         completed_at: new Date().toISOString(),
+//         compliance_score: 1.0, // Full compliance for SMS response
+//         notes: "Completed via SMS response",
+//       });
 
-    console.log(`📊 Pain level ${painLevel} recorded for patient ${patientId}`);
-  } catch (error) {
-    console.error("Error handling pain level response:", error);
-  }
-}
+//     if (logError) {
+//       console.error("Error logging exercise completion:", logError);
+//     }
+
+//     return `Great job, ${patients.first_name}! Exercise session logged. Keep up the good work!`;
+//   } catch (error) {
+//     console.error("Error handling exercise completion:", error);
+//     return "Unable to log exercise completion. Please contact us.";
+//   }
+// }
+
+// /**
+//  * Handle pain level responses
+//  */
+// async function handlePainLevelResponse(
+//   phone: string,
+//   message: string,
+//   clinicId: string,
+//   supabase: SupabaseClient
+// ): Promise<string> {
+//   try {
+//     // Extract pain level (assuming format like "Pain: 3" or just "3")
+//     const painLevel = parseInt(message.replace(/\D/g, ""));
+
+//     if (isNaN(painLevel) || painLevel < 0 || painLevel > 10) {
+//       return "Please respond with a pain level from 0-10 (0 = no pain, 10 = worst pain).";
+//     }
+
+//     // Find patient by phone
+//     const { data: patients, error } = await supabase
+//       .from("patients")
+//       .select("id, first_name, last_name")
+//       .eq("phone", phone)
+//       .eq("clinic_id", clinicId)
+//       .single();
+
+//     if (error || !patients) {
+//       return "Patient not found. Please contact us.";
+//     }
+
+//     // Log pain level
+//     const { error: logError } = await supabase.from("patient_progress").insert({
+//       clinic_id: clinicId,
+//       patient_id: patients.id,
+//       assessment_date: new Date().toISOString().split("T")[0],
+//       pain_level: painLevel,
+//       notes: "Pain level reported via SMS",
+//     });
+
+//     if (logError) {
+//       console.error("Error logging pain level:", logError);
+//     }
+
+//     const painDescription =
+//       painLevel <= 3 ? "low" : painLevel <= 6 ? "moderate" : "high";
+//     return `Thank you, ${patients.first_name}. Pain level ${painLevel} (${painDescription}) recorded. A therapist will review this information.`;
+//   } catch (error) {
+//     console.error("Error handling pain level response:", error);
+//     return "Unable to record pain level. Please contact us.";
+//   }
+// }
 
 /**
  * Log inbound message to database

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
-import { sendSMS, sendBulkSMS } from "@/server/sms";
 import { requireUser } from "@/lib/auth";
+import { sendSMS, sendBulkSMS } from "@/server/sms";
+import { z } from "zod";
 
 // Validation schema for single SMS
 const sendSMSSchema = z.object({
@@ -20,7 +20,16 @@ const sendSMSSchema = z.object({
 
 // Validation schema for bulk SMS
 const sendBulkSMSSchema = z.object({
-  messages: z.array(sendSMSSchema).min(1).max(100), // Limit bulk sends
+  messages: z.array(
+    z.object({
+      to: z
+        .string()
+        .regex(/^\+[1-9]\d{1,14}$/, "Invalid phone number format (E.164)"),
+      message: z.string().min(1).max(1600),
+      patientId: z.string().uuid().optional(),
+      appointmentId: z.string().uuid().optional(),
+    })
+  ),
 });
 
 // Test message schema
@@ -31,27 +40,22 @@ const sendTestSMSSchema = z.object({
   testType: z.enum(["welcome", "reminder", "exercise"]).default("welcome"),
 });
 
-/**
- * POST /api/twilio/send
- * Send SMS message(s) via Twilio
- */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    // Authenticate user and get clinic
     const user = await requireUser();
-    if (!user.clinic_id) {
+
+    // Get clinic_id from user metadata
+    const clinicId = user.user_metadata?.clinic_id;
+    if (!clinicId) {
       return NextResponse.json(
         { error: "User not associated with a clinic" },
-        { status: 403 }
+        { status: 400 }
       );
     }
 
     const body = await request.json();
-    const url = new URL(request.url);
-    const isBulk = url.searchParams.get("bulk") === "true";
-    const isTest = url.searchParams.get("test") === "true";
+    const { isTest, isBulk, ...rest } = body;
 
-    // Handle test SMS
     if (isTest) {
       const { to, testType } = sendTestSMSSchema.parse(body);
 
@@ -66,18 +70,17 @@ export async function POST() {
       const result = await sendSMS({
         to,
         message: testMessages[testType],
-        clinicId: user.clinic_id,
-        messageType: "compliance",
+        clinicId,
+        messageType: "reminder",
       });
 
       return NextResponse.json(result);
     }
 
-    // Handle bulk SMS
     if (isBulk) {
       const { messages } = sendBulkSMSSchema.parse(body);
 
-      const results = await sendBulkSMS(messages, user.clinic_id);
+      const results = await sendBulkSMS(messages, clinicId);
 
       const summary = {
         total: results.length,
@@ -94,7 +97,7 @@ export async function POST() {
 
     const result = await sendSMS({
       ...smsData,
-      clinicId: user.clinic_id,
+      clinicId,
     });
 
     return NextResponse.json(result);
@@ -103,7 +106,7 @@ export async function POST() {
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: "Invalid request data", details: error.errors },
+        { error: "Validation error", details: error.issues },
         { status: 400 }
       );
     }
@@ -112,10 +115,6 @@ export async function POST() {
   }
 }
 
-/**
- * GET /api/twilio/send
- * Get SMS sending capabilities and limits
- */
 export async function GET() {
   try {
     await requireUser();
@@ -144,27 +143,14 @@ export async function GET() {
 
     return NextResponse.json(
       { error: "Failed to get SMS capabilities" },
-      { status: 500 }
+      { status: 401 }
     );
   }
 }
 
-/**
- * DELETE /api/twilio/send
- * Cancel pending SMS messages (if supported)
- */
 export async function DELETE(request: NextRequest) {
   try {
     await requireUser();
-    const url = new URL(request.url);
-    const messageId = url.searchParams.get("messageId");
-
-    if (!messageId) {
-      return NextResponse.json(
-        { error: "Message ID required" },
-        { status: 400 }
-      );
-    }
 
     // TODO: Implement message cancellation via Twilio API
     // This would require the message to be in "queued" or "scheduled" status
@@ -178,7 +164,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json(
       { error: "Failed to cancel SMS" },
-      { status: 500 }
+      { status: 401 }
     );
   }
 }

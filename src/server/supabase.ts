@@ -11,40 +11,16 @@ export async function supabaseServer() {
     env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(
-          name: string,
-          value: string,
-          options: {
-            path?: string;
-            maxAge?: number;
-            httpOnly?: boolean;
-            secure?: boolean;
-            sameSite?: string;
-          } = {}
-        ) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set({ name, value, ...options });
+            cookiesToSet.forEach(({ name, value, ...options }) => {
+              cookieStore.set(name, value, options as Record<string, unknown>);
+            });
           } catch {
             // In some contexts (e.g. Server Components), setting may not be allowed
-          }
-        },
-        remove(
-          name: string,
-          options: {
-            path?: string;
-            maxAge?: number;
-            httpOnly?: boolean;
-            secure?: boolean;
-            sameSite?: string;
-          } = {}
-        ) {
-          try {
-            cookieStore.set({ name, value: "", ...options });
-          } catch {
-            // Ignore errors when cookies can't be mutated
           }
         },
       },

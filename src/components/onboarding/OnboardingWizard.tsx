@@ -60,7 +60,7 @@ export default function OnboardingWizard() {
   useEffect(() => {
     const emailConfirmed = searchParams.get("email_confirmed") === "true";
     const stepParam = searchParams.get("step");
-    
+
     if (emailConfirmed && stepParam) {
       const step = parseInt(stepParam, 10);
       if (step >= 1 && step <= steps.length) {
@@ -126,7 +126,7 @@ export default function OnboardingWizard() {
         return (
           <Step2ClinicInfo
             data={data.step2}
-            onNext={(stepData) => {
+            onNext={(stepData: ClinicInfoData) => {
               updateData({ step2: stepData });
               nextStep();
             }}
@@ -137,7 +137,7 @@ export default function OnboardingWizard() {
         return (
           <Step3UserSetup
             data={data.step3}
-            onNext={(stepData) => {
+            onNext={(stepData: UserSetupData) => {
               updateData({ step3: stepData });
               nextStep();
             }}
@@ -148,7 +148,7 @@ export default function OnboardingWizard() {
         return (
           <Step4Compliance
             data={data.step4}
-            onNext={(stepData) => {
+            onNext={(stepData: ComplianceData) => {
               updateData({ step4: stepData });
               nextStep();
             }}
@@ -159,7 +159,7 @@ export default function OnboardingWizard() {
         return (
           <Step5Payment
             data={data.step5}
-            onNext={(stepData) => {
+            onNext={(stepData: PaymentSetupData) => {
               updateData({ step5: stepData });
               nextStep();
             }}
@@ -170,7 +170,7 @@ export default function OnboardingWizard() {
         return (
           <Step6Configuration
             data={data.step6}
-            onNext={(stepData) => {
+            onNext={(stepData: ConfigurationData) => {
               updateData({ step6: stepData });
               nextStep();
             }}
@@ -181,7 +181,7 @@ export default function OnboardingWizard() {
         return (
           <Step7SMSTest
             clinicPhone={data.step2?.clinicPhone}
-            onNext={(stepData) => {
+            onNext={(stepData: { testCompleted: boolean }) => {
               updateData({ step7: stepData });
               nextStep();
             }}
@@ -193,7 +193,7 @@ export default function OnboardingWizard() {
           <Step8StaffInvites
             data={data.step8}
             clinicName={data.step2?.clinicName}
-            onNext={(stepData) => {
+            onNext={(stepData: StaffInvitationData) => {
               updateData({ step8: stepData });
               nextStep();
             }}

@@ -1,13 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import {
-  paymentSetupSchema,
-  type PaymentSetupData,
-} from "@/lib/validations/onboarding";
 import { Button } from "@/components/ui/button";
+import { type PaymentSetupData } from "@/lib/validations/onboarding";
 
 import { CreditCardIcon, CheckIcon } from "lucide-react";
 
@@ -19,14 +14,14 @@ interface Step5Props {
 
 const plans = [
   {
-    id: "starter",
+    id: "starter" as const,
     name: "Starter",
     price: 199,
     smsIncluded: 1000,
     features: ["Up to 100 patients", "Basic templates", "Email support"],
   },
   {
-    id: "growth",
+    id: "growth" as const,
     name: "Growth",
     price: 349,
     smsIncluded: 2500,
@@ -39,7 +34,7 @@ const plans = [
     popular: true,
   },
   {
-    id: "pro",
+    id: "pro" as const,
     name: "Pro",
     price: 499,
     smsIncluded: 5000,
@@ -53,13 +48,10 @@ const plans = [
 ];
 
 export default function Step5Payment({ data, onNext, onBack }: Step5Props) {
-  const [selectedPlan] = useState(data?.subscriptionTier || "growth");
+  const [selectedPlan, setSelectedPlan] = useState<
+    "starter" | "growth" | "pro"
+  >("starter");
   const [useTrial] = useState(data?.useTrial !== false);
-
-  const {} = useForm<PaymentSetupData>({
-    resolver: zodResolver(paymentSetupSchema),
-    defaultValues: data,
-  });
 
   const onSubmit = () => {
     // Mock payment method ID - in real app, this would come from Stripe
@@ -112,7 +104,9 @@ export default function Step5Payment({ data, onNext, onBack }: Step5Props) {
                 ? "border-indigo-600 bg-indigo-50"
                 : "border-gray-200 hover:border-gray-300"
             }`}
-            onClick={() => setSelectedPlan(plan.id)}
+            onClick={() =>
+              setSelectedPlan(plan.id as "starter" | "growth" | "pro")
+            }
           >
             {plan.popular && (
               <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">

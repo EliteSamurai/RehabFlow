@@ -233,7 +233,7 @@ export async function HEAD() {
       status: status.status === "healthy" ? 200 : 503,
       headers: {
         "X-Engine-Status": status.status,
-        "X-Pending-Messages": status.total_pending.toString(),
+        "X-Pending-Messages": status.status === "healthy" ? status.total_pending.toString() : "0",
         "X-Last-Check": status.last_check,
       },
     });

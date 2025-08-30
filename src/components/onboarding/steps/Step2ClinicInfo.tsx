@@ -126,8 +126,8 @@ export default function Step2ClinicInfo({ data, onNext, onBack }: Step2Props) {
           <div>
             <Label htmlFor="specialty">Clinic Specialty</Label>
             <Select
-              value={watchedSpecialty}
-              onValueChange={(value) => setValue("specialty", value)}
+              value={watch("specialty")}
+              onValueChange={(value: "other" | "orthopedic" | "sports" | "neurological" | "pediatric" | "geriatric" | "cardiopulmonary") => setValue("specialty", value)}
             >
               <SelectTrigger
                 className={errors.specialty ? "border-red-300" : ""}
