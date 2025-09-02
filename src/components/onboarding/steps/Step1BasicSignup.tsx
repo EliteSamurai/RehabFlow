@@ -33,6 +33,24 @@ export default function Step1BasicSignup({ data, onNext }: Step1Props) {
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [userDataToPreFill, setUserDataToPreFill] =
+    useState<BasicSignupData | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    watch,
+    setValue,
+  } = useForm<BasicSignupData>({
+    resolver: zodResolver(basicSignupSchema),
+    defaultValues: data || {
+      firstName: "",
+      lastName: "",
+      email: "",
+      password: "",
+    },
+  });
 
   // Check if user is already authenticated (coming back from email confirmation)
   useEffect(() => {
@@ -41,35 +59,65 @@ export default function Step1BasicSignup({ data, onNext }: Step1Props) {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
       if (user) {
         setIsAuthenticated(true);
-        // Auto-fill form with user data and proceed
-        const userData: BasicSignupData = {
-          firstName: user.user_metadata?.first_name || "",
-          lastName: user.user_metadata?.last_name || "",
-          email: user.email || "",
-          password: "", // Don't show password for confirmed users
-        };
 
-        // Show success message and proceed
-        toast.success("Email confirmed! Continuing with setup...");
-        setTimeout(() => {
-          onNext(userData);
-        }, 1000);
+        // Only auto-advance if we have URL parameters indicating email confirmation
+        // AND we're coming from auth callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const emailConfirmed = urlParams.get("email_confirmed") === "true";
+        const comingFromCallback = document.referrer.includes("/auth/callback");
+
+        console.log("Step1 auth check:", {
+          emailConfirmed,
+          comingFromCallback,
+          referrer: document.referrer,
+          urlParams: window.location.search,
+        });
+
+        // Both conditions must be true for auto-advance
+        if (emailConfirmed && comingFromCallback) {
+          // Auto-fill form with user data and proceed
+          const userData: BasicSignupData = {
+            firstName: user.user_metadata?.first_name || "",
+            lastName: user.user_metadata?.last_name || "",
+            email: user.email || "",
+            password: "", // Don't show password for confirmed users
+          };
+
+          // Show success message and proceed
+          toast.success("Email confirmed! Continuing with setup...");
+          setTimeout(() => {
+            onNext(userData);
+          }, 1000);
+        } else {
+          // Just set the data to pre-fill later (no toast message)
+          const userData: BasicSignupData = {
+            firstName: user.user_metadata?.first_name || "",
+            lastName: user.user_metadata?.last_name || "",
+            email: user.email || "",
+            password: "",
+          };
+          setUserDataToPreFill(userData);
+          console.log(
+            "Pre-filling form for authenticated user (direct navigation)"
+          );
+        }
       }
     };
     checkAuth();
   }, [onNext]);
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    watch,
-  } = useForm<BasicSignupData>({
-    resolver: zodResolver(basicSignupSchema),
-    defaultValues: data,
-  });
+  // Pre-fill form when userDataToPreFill is set and form is ready
+  useEffect(() => {
+    if (userDataToPreFill && setValue) {
+      setValue("firstName", userDataToPreFill.firstName);
+      setValue("lastName", userDataToPreFill.lastName);
+      setValue("email", userDataToPreFill.email);
+      setUserDataToPreFill(null); // Clear after setting
+    }
+  }, [userDataToPreFill, setValue]);
 
   const watchedPassword = watch("password", "");
 
@@ -130,20 +178,30 @@ export default function Step1BasicSignup({ data, onNext }: Step1Props) {
 
   const strength = getPasswordStrength(watchedPassword);
 
-  // Show loading state for authenticated users
+  // Show loading state ONLY for legitimate email confirmation (not direct navigation)
   if (isAuthenticated) {
-    return (
-      <div className="space-y-6">
-        <div className="text-center">
-          <CheckIcon className="mx-auto h-12 w-12 text-green-500 mb-4" />
-          <h2 className="text-2xl font-bold text-gray-900">Email Confirmed!</h2>
-          <p className="mt-2 text-gray-600">Continuing with your setup...</p>
+    const urlParams = new URLSearchParams(window.location.search);
+    const emailConfirmed = urlParams.get("email_confirmed") === "true";
+    const comingFromCallback = document.referrer.includes("/auth/callback");
+
+    // Only show the "Email Confirmed" loading state if this is a legitimate confirmation
+    if (emailConfirmed && comingFromCallback) {
+      return (
+        <div className="space-y-6">
+          <div className="text-center">
+            <CheckIcon className="mx-auto h-12 w-12 text-green-500 mb-4" />
+            <h2 className="text-2xl font-bold text-gray-900">
+              Email Confirmed!
+            </h2>
+            <p className="mt-2 text-gray-600">Continuing with your setup...</p>
+          </div>
+          <div className="flex justify-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          </div>
         </div>
-        <div className="flex justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-        </div>
-      </div>
-    );
+      );
+    }
+    // For direct navigation, fall through to show the normal form (pre-filled)
   }
 
   // Show email confirmation message if email was sent

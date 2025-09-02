@@ -10,17 +10,17 @@ export async function GET(request: NextRequest) {
   if (code) {
     const supabase = await supabaseServer();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    
+
     if (!error) {
       const forwardedHost = request.headers.get("x-forwarded-host"); // original origin before load balancer
       const isLocalEnv = process.env.NODE_ENV === "development";
-      
+
       // Determine redirect URL
       let redirectUrl = next;
       if (continueOnboarding) {
         redirectUrl = `/signup?email_confirmed=true&step=2`;
       }
-      
+
       if (isLocalEnv) {
         // we can be sure that there is no load balancer in between, so no need to watch for X-Forwarded-Host
         return NextResponse.redirect(`${origin}${redirectUrl}`);

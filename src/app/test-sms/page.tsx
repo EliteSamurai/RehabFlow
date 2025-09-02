@@ -128,12 +128,10 @@ export default function TestSMSPage() {
   };
 
   return (
-    <div className="container mx-auto py-8 space-y-6">
-      <div className="text-center">
-        <h1 className="text-3xl font-bold">Test SMS Integration</h1>
-        <p className="text-muted-foreground">
-          Test your Twilio SMS integration with sample messages
-        </p>
+    <main data-testid="sms-test-page" className="p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">SMS Test</h1>
+        <p className="text-gray-600">Test SMS functionality</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -153,6 +151,7 @@ export default function TestSMSPage() {
               <Label htmlFor="phone">Phone Number</Label>
               <Input
                 id="phone"
+                name="phone"
                 type="tel"
                 placeholder="+1234567890"
                 value={phoneNumber}
@@ -302,6 +301,6 @@ export default function TestSMSPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </main>
   );
 }

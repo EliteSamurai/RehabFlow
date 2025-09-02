@@ -1,6 +1,6 @@
 "use server";
 
-import { stripe } from "./stripe";
+import { stripe } from "./stripe-server";
 import { supabaseServer } from "@/server/supabase";
 import { BILLING_PLANS, type BillingPlan } from "./stripe";
 import { env } from "@/env";

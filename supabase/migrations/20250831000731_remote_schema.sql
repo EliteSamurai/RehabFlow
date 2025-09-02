@@ -196,6 +196,90 @@ revoke truncate on table "public"."clinics" from "service_role";
 
 revoke update on table "public"."clinics" from "service_role";
 
+revoke delete on table "public"."consent_audit_log" from "anon";
+
+revoke insert on table "public"."consent_audit_log" from "anon";
+
+revoke references on table "public"."consent_audit_log" from "anon";
+
+revoke select on table "public"."consent_audit_log" from "anon";
+
+revoke trigger on table "public"."consent_audit_log" from "anon";
+
+revoke truncate on table "public"."consent_audit_log" from "anon";
+
+revoke update on table "public"."consent_audit_log" from "anon";
+
+revoke delete on table "public"."consent_audit_log" from "service_role";
+
+revoke insert on table "public"."consent_audit_log" from "service_role";
+
+revoke references on table "public"."consent_audit_log" from "service_role";
+
+revoke select on table "public"."consent_audit_log" from "service_role";
+
+revoke trigger on table "public"."consent_audit_log" from "service_role";
+
+revoke truncate on table "public"."consent_audit_log" from "service_role";
+
+revoke update on table "public"."consent_audit_log" from "service_role";
+
+revoke delete on table "public"."consent_compliance" from "anon";
+
+revoke insert on table "public"."consent_compliance" from "anon";
+
+revoke references on table "public"."consent_compliance" from "anon";
+
+revoke select on table "public"."consent_compliance" from "anon";
+
+revoke trigger on table "public"."consent_compliance" from "anon";
+
+revoke truncate on table "public"."consent_compliance" from "anon";
+
+revoke update on table "public"."consent_compliance" from "anon";
+
+revoke delete on table "public"."consent_compliance" from "service_role";
+
+revoke insert on table "public"."consent_compliance" from "service_role";
+
+revoke references on table "public"."consent_compliance" from "service_role";
+
+revoke select on table "public"."consent_compliance" from "service_role";
+
+revoke trigger on table "public"."consent_compliance" from "service_role";
+
+revoke truncate on table "public"."consent_compliance" from "service_role";
+
+revoke update on table "public"."consent_compliance" from "service_role";
+
+revoke delete on table "public"."consent_preferences" from "anon";
+
+revoke insert on table "public"."consent_preferences" from "anon";
+
+revoke references on table "public"."consent_preferences" from "anon";
+
+revoke select on table "public"."consent_preferences" from "anon";
+
+revoke trigger on table "public"."consent_preferences" from "anon";
+
+revoke truncate on table "public"."consent_preferences" from "anon";
+
+revoke update on table "public"."consent_preferences" from "anon";
+
+revoke delete on table "public"."consent_preferences" from "service_role";
+
+revoke insert on table "public"."consent_preferences" from "service_role";
+
+revoke references on table "public"."consent_preferences" from "service_role";
+
+revoke select on table "public"."consent_preferences" from "service_role";
+
+revoke trigger on table "public"."consent_preferences" from "service_role";
+
+revoke truncate on table "public"."consent_preferences" from "service_role";
+
+revoke update on table "public"."consent_preferences" from "service_role";
+
 revoke delete on table "public"."exercise_completions" from "anon";
 
 revoke insert on table "public"."exercise_completions" from "anon";
@@ -335,6 +419,34 @@ revoke trigger on table "public"."patient_compliance" from "service_role";
 revoke truncate on table "public"."patient_compliance" from "service_role";
 
 revoke update on table "public"."patient_compliance" from "service_role";
+
+revoke delete on table "public"."patient_consents" from "anon";
+
+revoke insert on table "public"."patient_consents" from "anon";
+
+revoke references on table "public"."patient_consents" from "anon";
+
+revoke select on table "public"."patient_consents" from "anon";
+
+revoke trigger on table "public"."patient_consents" from "anon";
+
+revoke truncate on table "public"."patient_consents" from "anon";
+
+revoke update on table "public"."patient_consents" from "anon";
+
+revoke delete on table "public"."patient_consents" from "service_role";
+
+revoke insert on table "public"."patient_consents" from "service_role";
+
+revoke references on table "public"."patient_consents" from "service_role";
+
+revoke select on table "public"."patient_consents" from "service_role";
+
+revoke trigger on table "public"."patient_consents" from "service_role";
+
+revoke truncate on table "public"."patient_consents" from "service_role";
+
+revoke update on table "public"."patient_consents" from "service_role";
 
 revoke delete on table "public"."patient_exercises" from "anon";
 
@@ -564,19 +676,7 @@ alter table "public"."appointments" drop constraint "appointments_no_show_recove
 
 alter table "public"."campaign_enrollments" drop constraint "campaign_enrollments_status_check";
 
-alter table "public"."clinic_subscriptions" add column "cancel_at_period_end" boolean default false;
-
-alter table "public"."clinic_subscriptions" add column "customer_id" text;
-
-alter table "public"."clinic_subscriptions" add column "sms_subscription_item_id" text;
-
-alter table "public"."clinic_subscriptions" add column "trial_end" timestamp without time zone;
-
-CREATE INDEX idx_clinic_subscriptions_customer ON public.clinic_subscriptions USING btree (customer_id);
-
-CREATE INDEX idx_usage_logs_clinic_date ON public.usage_logs USING btree (clinic_id, date);
-
-CREATE INDEX ix_clinic_subscriptions_clinic ON public.clinic_subscriptions USING btree (clinic_id);
+alter table "public"."consent_preferences" drop constraint "valid_frequency_limits";
 
 alter table "public"."appointments" add constraint "appointments_no_show_recovery_status_check" CHECK (((no_show_recovery_status)::text = ANY ((ARRAY['none'::character varying, 'enrolled'::character varying, 'active'::character varying, 'completed'::character varying, 'cancelled'::character varying])::text[]))) not valid;
 
@@ -585,5 +685,9 @@ alter table "public"."appointments" validate constraint "appointments_no_show_re
 alter table "public"."campaign_enrollments" add constraint "campaign_enrollments_status_check" CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'paused'::character varying, 'completed'::character varying, 'cancelled'::character varying])::text[]))) not valid;
 
 alter table "public"."campaign_enrollments" validate constraint "campaign_enrollments_status_check";
+
+alter table "public"."consent_preferences" add constraint "valid_frequency_limits" CHECK ((((max_sms_per_day >= 1) AND (max_sms_per_day <= 10)) AND ((max_email_per_week >= 1) AND (max_email_per_week <= 7)))) not valid;
+
+alter table "public"."consent_preferences" validate constraint "valid_frequency_limits";
 
 

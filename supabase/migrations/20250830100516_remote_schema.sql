@@ -52,6 +52,45 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
+CREATE OR REPLACE FUNCTION "public"."calculate_consent_compliance_score"("p_clinic_id" "uuid", "p_patient_id" "uuid") RETURNS numeric
+    LANGUAGE "plpgsql"
+    AS $$
+DECLARE
+  v_score DECIMAL(3,2) := 0.00;
+  v_total_fields INTEGER := 7; -- Total number of consent fields
+  v_granted_fields INTEGER := 0;
+BEGIN
+  -- Count granted consent fields
+  SELECT COUNT(*) INTO v_granted_fields
+  FROM patient_consents pc
+  WHERE pc.clinic_id = p_clinic_id 
+    AND pc.patient_id = p_patient_id
+    AND pc.withdrawal_date IS NULL
+    AND (
+      (pc.sms_consent = true) +
+      (pc.email_consent = true) +
+      (pc.data_processing_consent = true) +
+      (pc.third_party_sharing_consent = true) +
+      (pc.marketing_consent = true) +
+      (pc.age_confirmed = true) +
+      (pc.terms_accepted = true)
+    );
+  
+  -- Calculate score as percentage
+  v_score := ROUND((v_granted_fields::DECIMAL / v_total_fields), 2);
+  
+  RETURN v_score;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."calculate_consent_compliance_score"("p_clinic_id" "uuid", "p_patient_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."calculate_consent_compliance_score"("p_clinic_id" "uuid", "p_patient_id" "uuid") IS 'Calculates overall consent compliance score (0.00-1.00)';
+
+
+
 CREATE OR REPLACE FUNCTION "public"."get_user_clinic_id"() RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     AS $$
@@ -67,6 +106,87 @@ $$;
 
 
 ALTER FUNCTION "public"."get_user_clinic_id"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."trigger_update_consent_compliance"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  -- Update compliance tracking
+  PERFORM update_consent_compliance(NEW.clinic_id, NEW.patient_id);
+  
+  -- Log the change in audit log
+  INSERT INTO consent_audit_log (
+    clinic_id, patient_id, consent_id, change_type, field_name, old_value, new_value
+  ) VALUES (
+    NEW.clinic_id, NEW.patient_id, NEW.id,
+    CASE 
+      WHEN TG_OP = 'INSERT' THEN 'consent_granted'
+      WHEN TG_OP = 'UPDATE' THEN 'consent_updated'
+      WHEN TG_OP = 'DELETE' THEN 'consent_deleted'
+    END,
+    NULL, NULL, NULL
+  );
+  
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."trigger_update_consent_compliance"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."update_consent_compliance"("p_clinic_id" "uuid", "p_patient_id" "uuid") RETURNS "void"
+    LANGUAGE "plpgsql"
+    AS $$
+DECLARE
+  v_compliance_score DECIMAL(3,2);
+  v_sms_compliance BOOLEAN;
+  v_email_compliance BOOLEAN;
+  v_data_processing_compliance BOOLEAN;
+BEGIN
+  -- Calculate compliance score
+  v_compliance_score := calculate_consent_compliance_score(p_clinic_id, p_patient_id);
+  
+  -- Get individual compliance statuses
+  SELECT 
+    COALESCE(sms_consent, false) AND withdrawal_date IS NULL,
+    COALESCE(email_consent, false) AND withdrawal_date IS NULL,
+    COALESCE(data_processing_consent, false) AND withdrawal_date IS NULL
+  INTO v_sms_compliance, v_email_compliance, v_data_processing_compliance
+  FROM patient_consents pc
+  WHERE pc.clinic_id = p_clinic_id AND pc.patient_id = p_patient_id
+  ORDER BY pc.consent_date DESC
+  LIMIT 1;
+  
+  -- Upsert compliance record
+  INSERT INTO consent_compliance (
+    clinic_id, patient_id, overall_compliance_score,
+    sms_compliance, email_compliance, data_processing_compliance,
+    last_compliance_check, next_compliance_check, consent_expiration_date
+  ) VALUES (
+    p_clinic_id, p_patient_id, v_compliance_score,
+    v_sms_compliance, v_email_compliance, v_data_processing_compliance,
+    NOW(), NOW() + INTERVAL '1 year', NOW() + INTERVAL '1 year'
+  )
+  ON CONFLICT (clinic_id, patient_id) DO UPDATE SET
+    overall_compliance_score = EXCLUDED.overall_compliance_score,
+    sms_compliance = EXCLUDED.sms_compliance,
+    email_compliance = EXCLUDED.email_compliance,
+    data_processing_compliance = EXCLUDED.data_processing_compliance,
+    last_compliance_check = EXCLUDED.last_compliance_check,
+    next_compliance_check = EXCLUDED.next_compliance_check,
+    consent_expiration_date = EXCLUDED.consent_expiration_date,
+    updated_at = NOW();
+END;
+$$;
+
+
+ALTER FUNCTION "public"."update_consent_compliance"("p_clinic_id" "uuid", "p_patient_id" "uuid") OWNER TO "postgres";
+
+
+COMMENT ON FUNCTION "public"."update_consent_compliance"("p_clinic_id" "uuid", "p_patient_id" "uuid") IS 'Updates compliance tracking when consent records change';
+
 
 
 CREATE OR REPLACE FUNCTION "public"."update_updated_at_column"() RETURNS "trigger"
@@ -148,6 +268,22 @@ CREATE TABLE IF NOT EXISTS "public"."campaign_enrollments" (
 ALTER TABLE "public"."campaign_enrollments" OWNER TO "postgres";
 
 
+COMMENT ON TABLE "public"."campaign_enrollments" IS 'Tracks patient enrollment in automated campaigns, including the 4-step no-show recovery sequence';
+
+
+
+COMMENT ON COLUMN "public"."campaign_enrollments"."next_message_at" IS 'When the next message in the sequence should be sent';
+
+
+
+COMMENT ON COLUMN "public"."campaign_enrollments"."current_step" IS 'Current step in the campaign sequence (1-4 for no-show recovery)';
+
+
+
+COMMENT ON COLUMN "public"."campaign_enrollments"."metadata" IS 'Stores campaign-specific data including appointment_id, original_scheduled_at, clinic_name, patient_name, no_show_detected_at, and campaign_type for no-show recovery';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."campaigns" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "clinic_id" "uuid",
@@ -174,7 +310,11 @@ CREATE TABLE IF NOT EXISTS "public"."clinic_subscriptions" (
     "current_period_start" timestamp with time zone,
     "current_period_end" timestamp with time zone,
     "created_at" timestamp with time zone DEFAULT "now"(),
-    "updated_at" timestamp with time zone DEFAULT "now"()
+    "updated_at" timestamp with time zone DEFAULT "now"(),
+    "customer_id" "text",
+    "sms_subscription_item_id" "text",
+    "trial_end" timestamp without time zone,
+    "cancel_at_period_end" boolean DEFAULT false
 );
 
 
@@ -214,6 +354,86 @@ CREATE TABLE IF NOT EXISTS "public"."clinics" (
 
 
 ALTER TABLE "public"."clinics" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."consent_audit_log" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "clinic_id" "uuid" NOT NULL,
+    "patient_id" "uuid" NOT NULL,
+    "consent_id" "uuid" NOT NULL,
+    "change_type" character varying(50) NOT NULL,
+    "field_name" character varying(100),
+    "old_value" "text",
+    "new_value" "text",
+    "change_reason" "text",
+    "changed_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "changed_by" "uuid",
+    "ip_address" "inet",
+    "user_agent" "text"
+);
+
+
+ALTER TABLE "public"."consent_audit_log" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."consent_audit_log" IS 'Audit trail for all consent changes and withdrawals';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."consent_compliance" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "clinic_id" "uuid" NOT NULL,
+    "patient_id" "uuid" NOT NULL,
+    "overall_compliance_score" numeric(3,2) DEFAULT 0.00 NOT NULL,
+    "sms_compliance" boolean DEFAULT false NOT NULL,
+    "email_compliance" boolean DEFAULT false NOT NULL,
+    "data_processing_compliance" boolean DEFAULT false NOT NULL,
+    "last_compliance_check" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "next_compliance_check" timestamp with time zone DEFAULT ("now"() + '1 year'::interval) NOT NULL,
+    "consent_expiration_date" timestamp with time zone DEFAULT ("now"() + '1 year'::interval) NOT NULL,
+    "compliance_actions_required" "text"[],
+    "compliance_notes" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "valid_compliance_dates" CHECK ((("next_compliance_check" > "last_compliance_check") AND ("consent_expiration_date" > "now"()))),
+    CONSTRAINT "valid_compliance_score" CHECK ((("overall_compliance_score" >= 0.00) AND ("overall_compliance_score" <= 1.00)))
+);
+
+
+ALTER TABLE "public"."consent_compliance" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."consent_compliance" IS 'Compliance tracking and scoring for consent management';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."consent_preferences" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "clinic_id" "uuid" NOT NULL,
+    "patient_id" "uuid" NOT NULL,
+    "sms_quiet_hours_start" time without time zone DEFAULT '22:00:00'::time without time zone,
+    "sms_quiet_hours_end" time without time zone DEFAULT '08:00:00'::time without time zone,
+    "sms_timezone" character varying(50) DEFAULT 'UTC'::character varying,
+    "appointment_reminders" boolean DEFAULT true,
+    "exercise_reminders" boolean DEFAULT true,
+    "progress_checkins" boolean DEFAULT true,
+    "no_show_recovery" boolean DEFAULT true,
+    "treatment_updates" boolean DEFAULT true,
+    "marketing_messages" boolean DEFAULT false,
+    "max_sms_per_day" integer DEFAULT 3,
+    "max_email_per_week" integer DEFAULT 2,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "valid_frequency_limits" CHECK (((("max_sms_per_day" >= 1) AND ("max_sms_per_day" <= 10)) AND (("max_email_per_week" >= 1) AND ("max_email_per_week" <= 7)))),
+    CONSTRAINT "valid_quiet_hours" CHECK (("sms_quiet_hours_start" < "sms_quiet_hours_end"))
+);
+
+
+ALTER TABLE "public"."consent_preferences" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."consent_preferences" IS 'Granular communication preferences for consented patients';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."exercise_completions" (
@@ -283,6 +503,14 @@ CREATE TABLE IF NOT EXISTS "public"."message_logs" (
 ALTER TABLE "public"."message_logs" OWNER TO "postgres";
 
 
+COMMENT ON TABLE "public"."message_logs" IS 'Logs all SMS messages sent, including system messages for no-show detection and recovery sequence tracking';
+
+
+
+COMMENT ON COLUMN "public"."message_logs"."metadata" IS 'Stores message-specific metadata including message_key for idempotency, no_show_step for recovery sequence, and other tracking information';
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."message_templates" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "clinic_id" "uuid",
@@ -316,6 +544,39 @@ CREATE TABLE IF NOT EXISTS "public"."patient_compliance" (
 
 
 ALTER TABLE "public"."patient_compliance" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."patient_consents" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "clinic_id" "uuid" NOT NULL,
+    "patient_id" "uuid" NOT NULL,
+    "sms_consent" boolean DEFAULT false NOT NULL,
+    "email_consent" boolean DEFAULT false NOT NULL,
+    "data_processing_consent" boolean DEFAULT false NOT NULL,
+    "third_party_sharing_consent" boolean DEFAULT false NOT NULL,
+    "marketing_consent" boolean DEFAULT false NOT NULL,
+    "age_confirmed" boolean DEFAULT false NOT NULL,
+    "terms_accepted" boolean DEFAULT false NOT NULL,
+    "consent_date" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "consent_version" character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    "consent_source" character varying(50) DEFAULT 'web_form'::character varying NOT NULL,
+    "withdrawal_date" timestamp with time zone,
+    "withdrawal_reason" "text",
+    "withdrawal_method" character varying(50),
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "created_by" "uuid",
+    "updated_by" "uuid",
+    CONSTRAINT "valid_consent_dates" CHECK ((("withdrawal_date" IS NULL) OR ("withdrawal_date" >= "consent_date"))),
+    CONSTRAINT "valid_consent_version" CHECK ((("consent_version")::"text" ~ '^[0-9]+\.[0-9]+$'::"text"))
+);
+
+
+ALTER TABLE "public"."patient_consents" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."patient_consents" IS 'Stores patient consent records for HIPAA, GDPR, and TCPA compliance';
+
 
 
 CREATE TABLE IF NOT EXISTS "public"."patient_exercises" (
@@ -535,6 +796,31 @@ ALTER TABLE ONLY "public"."clinics"
 
 
 
+ALTER TABLE ONLY "public"."consent_audit_log"
+    ADD CONSTRAINT "consent_audit_log_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."consent_compliance"
+    ADD CONSTRAINT "consent_compliance_clinic_id_patient_id_key" UNIQUE ("clinic_id", "patient_id");
+
+
+
+ALTER TABLE ONLY "public"."consent_compliance"
+    ADD CONSTRAINT "consent_compliance_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."consent_preferences"
+    ADD CONSTRAINT "consent_preferences_clinic_id_patient_id_key" UNIQUE ("clinic_id", "patient_id");
+
+
+
+ALTER TABLE ONLY "public"."consent_preferences"
+    ADD CONSTRAINT "consent_preferences_pkey" PRIMARY KEY ("id");
+
+
+
 ALTER TABLE ONLY "public"."exercise_completions"
     ADD CONSTRAINT "exercise_completions_pkey" PRIMARY KEY ("id");
 
@@ -562,6 +848,16 @@ ALTER TABLE ONLY "public"."patient_compliance"
 
 ALTER TABLE ONLY "public"."patient_compliance"
     ADD CONSTRAINT "patient_compliance_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_clinic_id_patient_id_consent_version_key" UNIQUE ("clinic_id", "patient_id", "consent_version");
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_pkey" PRIMARY KEY ("id");
 
 
 
@@ -644,6 +940,10 @@ CREATE INDEX "idx_appointments_status" ON "public"."appointments" USING "btree" 
 
 
 
+CREATE INDEX "idx_appointments_status_scheduled_at" ON "public"."appointments" USING "btree" ("status", "scheduled_at") WHERE (("status")::"text" = 'scheduled'::"text");
+
+
+
 CREATE INDEX "idx_appointments_therapist_id" ON "public"."appointments" USING "btree" ("therapist_id");
 
 
@@ -652,7 +952,15 @@ CREATE INDEX "idx_campaign_enrollments_active" ON "public"."campaign_enrollments
 
 
 
+CREATE INDEX "idx_campaign_enrollments_no_show_recovery" ON "public"."campaign_enrollments" USING "btree" ("clinic_id", "status", "next_message_at") WHERE ((("metadata" ->> 'campaign_type'::"text") = 'no_show_recovery'::"text") AND (("status")::"text" = 'active'::"text"));
+
+
+
 CREATE INDEX "idx_campaign_enrollments_patient" ON "public"."campaign_enrollments" USING "btree" ("patient_id", "campaign_id", "status");
+
+
+
+CREATE INDEX "idx_clinic_subscriptions_customer" ON "public"."clinic_subscriptions" USING "btree" ("customer_id");
 
 
 
@@ -685,6 +993,14 @@ CREATE INDEX "idx_message_logs_campaign" ON "public"."message_logs" USING "btree
 
 
 CREATE INDEX "idx_message_logs_clinic_id" ON "public"."message_logs" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "idx_message_logs_no_show_detection" ON "public"."message_logs" USING "btree" ("clinic_id", "appointment_id") WHERE (("metadata" ->> 'no_show_detected'::"text") = 'true'::"text");
+
+
+
+CREATE INDEX "idx_message_logs_no_show_recovery_step" ON "public"."message_logs" USING "btree" ("clinic_id", "patient_id", "appointment_id") WHERE (("metadata" ->> 'campaign_type'::"text") = 'no_show_recovery'::"text");
 
 
 
@@ -760,11 +1076,83 @@ CREATE INDEX "idx_treatment_plans_status" ON "public"."treatment_plans" USING "b
 
 
 
+CREATE INDEX "idx_usage_logs_clinic_date" ON "public"."usage_logs" USING "btree" ("clinic_id", "date");
+
+
+
 CREATE INDEX "ix_appts_clinic_sched" ON "public"."appointments" USING "btree" ("clinic_id", "scheduled_at");
 
 
 
+CREATE INDEX "ix_clinic_subscriptions_clinic" ON "public"."clinic_subscriptions" USING "btree" ("clinic_id");
+
+
+
 CREATE INDEX "ix_clinic_users_clinic" ON "public"."clinic_users" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "ix_consent_audit_log_changed_at" ON "public"."consent_audit_log" USING "btree" ("changed_at");
+
+
+
+CREATE INDEX "ix_consent_audit_log_clinic_id" ON "public"."consent_audit_log" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "ix_consent_audit_log_consent_id" ON "public"."consent_audit_log" USING "btree" ("consent_id");
+
+
+
+CREATE INDEX "ix_consent_audit_log_patient_id" ON "public"."consent_audit_log" USING "btree" ("patient_id");
+
+
+
+CREATE INDEX "ix_consent_compliance_clinic_id" ON "public"."consent_compliance" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "ix_consent_compliance_expiration" ON "public"."consent_compliance" USING "btree" ("consent_expiration_date");
+
+
+
+CREATE INDEX "ix_consent_compliance_patient_id" ON "public"."consent_compliance" USING "btree" ("patient_id");
+
+
+
+CREATE INDEX "ix_consent_compliance_score" ON "public"."consent_compliance" USING "btree" ("overall_compliance_score");
+
+
+
+CREATE INDEX "ix_consent_preferences_clinic_id" ON "public"."consent_preferences" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "ix_consent_preferences_patient_id" ON "public"."consent_preferences" USING "btree" ("patient_id");
+
+
+
+CREATE INDEX "ix_patient_consents_clinic_id" ON "public"."patient_consents" USING "btree" ("clinic_id");
+
+
+
+CREATE INDEX "ix_patient_consents_consent_date" ON "public"."patient_consents" USING "btree" ("consent_date");
+
+
+
+CREATE INDEX "ix_patient_consents_email_consent" ON "public"."patient_consents" USING "btree" ("email_consent") WHERE ("email_consent" = true);
+
+
+
+CREATE INDEX "ix_patient_consents_patient_id" ON "public"."patient_consents" USING "btree" ("patient_id");
+
+
+
+CREATE INDEX "ix_patient_consents_sms_consent" ON "public"."patient_consents" USING "btree" ("sms_consent") WHERE ("sms_consent" = true);
+
+
+
+CREATE INDEX "ix_patient_consents_withdrawal_date" ON "public"."patient_consents" USING "btree" ("withdrawal_date");
 
 
 
@@ -773,6 +1161,10 @@ CREATE INDEX "ix_patients_clinic" ON "public"."patients" USING "btree" ("clinic_
 
 
 CREATE UNIQUE INDEX "ux_msg_unique_reminder" ON "public"."message_logs" USING "btree" ("clinic_id", "appointment_id", "template_id");
+
+
+
+CREATE OR REPLACE TRIGGER "trigger_consent_compliance_update" AFTER INSERT OR DELETE OR UPDATE ON "public"."patient_consents" FOR EACH ROW EXECUTE FUNCTION "public"."trigger_update_consent_compliance"();
 
 
 
@@ -880,6 +1272,46 @@ ALTER TABLE ONLY "public"."clinic_users"
 
 
 
+ALTER TABLE ONLY "public"."consent_audit_log"
+    ADD CONSTRAINT "consent_audit_log_changed_by_fkey" FOREIGN KEY ("changed_by") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."consent_audit_log"
+    ADD CONSTRAINT "consent_audit_log_clinic_id_fkey" FOREIGN KEY ("clinic_id") REFERENCES "public"."clinics"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_audit_log"
+    ADD CONSTRAINT "consent_audit_log_consent_id_fkey" FOREIGN KEY ("consent_id") REFERENCES "public"."patient_consents"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_audit_log"
+    ADD CONSTRAINT "consent_audit_log_patient_id_fkey" FOREIGN KEY ("patient_id") REFERENCES "public"."patients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_compliance"
+    ADD CONSTRAINT "consent_compliance_clinic_id_fkey" FOREIGN KEY ("clinic_id") REFERENCES "public"."clinics"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_compliance"
+    ADD CONSTRAINT "consent_compliance_patient_id_fkey" FOREIGN KEY ("patient_id") REFERENCES "public"."patients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_preferences"
+    ADD CONSTRAINT "consent_preferences_clinic_id_fkey" FOREIGN KEY ("clinic_id") REFERENCES "public"."clinics"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."consent_preferences"
+    ADD CONSTRAINT "consent_preferences_patient_id_fkey" FOREIGN KEY ("patient_id") REFERENCES "public"."patients"("id") ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."exercise_completions"
     ADD CONSTRAINT "exercise_completions_clinic_id_fkey" FOREIGN KEY ("clinic_id") REFERENCES "public"."clinics"("id") ON DELETE CASCADE;
 
@@ -942,6 +1374,26 @@ ALTER TABLE ONLY "public"."patient_compliance"
 
 ALTER TABLE ONLY "public"."patient_compliance"
     ADD CONSTRAINT "patient_compliance_treatment_plan_id_fkey" FOREIGN KEY ("treatment_plan_id") REFERENCES "public"."treatment_plans"("id");
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_clinic_id_fkey" FOREIGN KEY ("clinic_id") REFERENCES "public"."clinics"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "auth"."users"("id");
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_patient_id_fkey" FOREIGN KEY ("patient_id") REFERENCES "public"."patients"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."patient_consents"
+    ADD CONSTRAINT "patient_consents_updated_by_fkey" FOREIGN KEY ("updated_by") REFERENCES "auth"."users"("id");
 
 
 
@@ -1054,6 +1506,30 @@ CREATE POLICY "Service role can access all enrollments" ON "public"."campaign_en
 
 
 
+CREATE POLICY "Users can access consent audit logs for their clinic" ON "public"."consent_audit_log" USING (("clinic_id" IN ( SELECT "clinic_users"."clinic_id"
+   FROM "public"."clinic_users"
+  WHERE ("clinic_users"."user_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "Users can access consent compliance for their clinic" ON "public"."consent_compliance" USING (("clinic_id" IN ( SELECT "clinic_users"."clinic_id"
+   FROM "public"."clinic_users"
+  WHERE ("clinic_users"."user_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "Users can access consent preferences for their clinic" ON "public"."consent_preferences" USING (("clinic_id" IN ( SELECT "clinic_users"."clinic_id"
+   FROM "public"."clinic_users"
+  WHERE ("clinic_users"."user_id" = "auth"."uid"()))));
+
+
+
+CREATE POLICY "Users can access consent records for their clinic" ON "public"."patient_consents" USING (("clinic_id" IN ( SELECT "clinic_users"."clinic_id"
+   FROM "public"."clinic_users"
+  WHERE ("clinic_users"."user_id" = "auth"."uid"()))));
+
+
+
 CREATE POLICY "Users can only access enrollments for their own clinic" ON "public"."campaign_enrollments" USING (("auth"."uid"() IN ( SELECT "clinic_users"."user_id"
    FROM "public"."clinic_users"
   WHERE ("clinic_users"."clinic_id" = "campaign_enrollments"."clinic_id"))));
@@ -1138,6 +1614,15 @@ CREATE POLICY "clinic_members_tp" ON "public"."treatment_plans" USING (("auth"."
 ALTER TABLE "public"."clinics" ENABLE ROW LEVEL SECURITY;
 
 
+ALTER TABLE "public"."consent_audit_log" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."consent_compliance" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."consent_preferences" ENABLE ROW LEVEL SECURITY;
+
+
 ALTER TABLE "public"."exercise_completions" ENABLE ROW LEVEL SECURITY;
 
 
@@ -1148,6 +1633,9 @@ ALTER TABLE "public"."message_logs" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."message_templates" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."patient_consents" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."patient_exercises" ENABLE ROW LEVEL SECURITY;
@@ -1367,6 +1855,18 @@ GRANT ALL ON TABLE "public"."clinics" TO "authenticated";
 
 
 
+GRANT ALL ON TABLE "public"."consent_audit_log" TO "authenticated";
+
+
+
+GRANT ALL ON TABLE "public"."consent_compliance" TO "authenticated";
+
+
+
+GRANT ALL ON TABLE "public"."consent_preferences" TO "authenticated";
+
+
+
 GRANT ALL ON TABLE "public"."exercise_completions" TO "authenticated";
 
 
@@ -1384,6 +1884,10 @@ GRANT ALL ON TABLE "public"."message_templates" TO "authenticated";
 
 
 GRANT ALL ON TABLE "public"."patient_compliance" TO "authenticated";
+
+
+
+GRANT ALL ON TABLE "public"."patient_consents" TO "authenticated";
 
 
 

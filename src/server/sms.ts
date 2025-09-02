@@ -1,7 +1,6 @@
 import { Twilio } from "twilio";
 import { env } from "@/env";
 import { supabaseServer } from "./supabase";
-import { supabaseService } from "@/server/supabase-service";
 
 // Initialize Twilio client
 const twilioClient = new Twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
@@ -406,31 +405,31 @@ export async function sendOptInConfirmation(
 //   messageId: string,
 //   success: boolean
 // ) {
-try {
-  const supabase = supabaseService();
-
-  // Record usage for billing purposes
-  const { error } = await supabase.from("usage_logs").upsert(
-    {
-      clinic_id: clinicId,
-      date: new Date().toISOString().split("T")[0], // Current date
-      sms_sent: success ? 1 : 0,
-      message_id: messageId,
-      created_at: new Date(),
-    },
-    {
-      onConflict: "clinic_id,date",
-    }
-  );
-
-  if (error) {
-    console.error("Error tracking SMS usage:", error);
-  } else {
-    console.log(
-      `SMS usage tracked for message ${messageId} in clinic ${clinicId}`
-    );
-  }
-} catch (error) {
-  console.error("Error tracking SMS usage:", error);
-}
+//   try {
+//     const supabase = supabaseService();
+//
+//     // Record usage for billing purposes
+//     const { error } = await (supabase as any).from("usage_logs").upsert(
+//       {
+//         clinic_id: clinicId,
+//         date: new Date().toISOString().split("T")[0], // Current date
+//         sms_sent: success ? 1 : 0,
+//         message_id: messageId,
+//         created_at: new Date(),
+//       },
+//       {
+//         onConflict: "clinic_id,date",
+//       }
+//     );
+//
+//     if (error) {
+//       console.error("Error tracking SMS usage:", error);
+//     } else {
+//       console.log(
+//         `SMS usage tracked for message ${messageId} in clinic ${clinicId}`
+//       );
+//     }
+//   } catch (error) {
+//     console.error("Error tracking SMS usage:", error);
+//   }
 // }

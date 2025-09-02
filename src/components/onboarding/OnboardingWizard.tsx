@@ -53,19 +53,39 @@ export default function OnboardingWizard() {
   const [currentStep, setCurrentStep] = useState(1);
   const [data, setData] = useState<OnboardingData>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [initialized, setInitialized] = useState(false); // Add this flag
   const router = useRouter();
   const searchParams = useSearchParams();
 
   // Handle URL parameters for email confirmation and step continuation
   useEffect(() => {
+    // Prevent multiple initializations
+    if (initialized) return;
+
     const emailConfirmed = searchParams.get("email_confirmed") === "true";
     const stepParam = searchParams.get("step");
 
-    if (emailConfirmed && stepParam) {
+    console.log("OnboardingWizard useEffect:", {
+      emailConfirmed,
+      stepParam,
+      referrer: document.referrer,
+      currentUrl: window.location.href,
+      currentStepInEffect: currentStep,
+      initialized,
+    });
+
+    // Only process if we have confirmation parameters AND we're coming from auth callback
+    if (
+      emailConfirmed &&
+      stepParam &&
+      document.referrer.includes("/auth/callback")
+    ) {
       const step = parseInt(stepParam, 10);
       if (step >= 1 && step <= steps.length) {
+        console.log("Setting step to:", step);
         setCurrentStep(step);
-        // Show success message for email confirmation
+
+        // Show success message and clear URL params
         if (typeof window !== "undefined") {
           setTimeout(() => {
             const event = new CustomEvent("show-toast", {
@@ -76,10 +96,20 @@ export default function OnboardingWizard() {
             });
             window.dispatchEvent(event);
           }, 500);
+
+          const newUrl = new URL(window.location.href);
+          newUrl.searchParams.delete("email_confirmed");
+          newUrl.searchParams.delete("step");
+          window.history.replaceState({}, document.title, newUrl.pathname);
         }
       }
+    } else {
+      console.log("Not processing email confirmation - ensuring step 1");
+      setCurrentStep(1);
     }
-  }, [searchParams]);
+
+    setInitialized(true); // Mark as initialized
+  }, [searchParams, initialized]); // Add initialized to dependencies
 
   const updateData = (stepData: Partial<OnboardingData>) => {
     setData((prev) => ({ ...prev, ...stepData }));
@@ -111,6 +141,7 @@ export default function OnboardingWizard() {
   };
 
   const renderStep = () => {
+    console.log("renderStep called with currentStep:", currentStep);
     switch (currentStep) {
       case 1:
         return (
@@ -123,6 +154,7 @@ export default function OnboardingWizard() {
           />
         );
       case 2:
+        console.log("Rendering Step2ClinicInfo");
         return (
           <Step2ClinicInfo
             data={data.step2}
@@ -248,70 +280,10 @@ export default function OnboardingWizard() {
                 style={{ width: `${(currentStep / steps.length) * 100}%` }}
               />
             </div>
-            <div className="text-center mt-2">
-              <span className="text-sm font-medium text-gray-900">
-                {steps[currentStep - 1]?.title}
-              </span>
-            </div>
           </div>
 
-          {/* Desktop Progress */}
-          <div className="hidden sm:block">
-            <div className="flex items-center justify-between overflow-x-auto">
-              {steps.map((step, index) => (
-                <div key={step.id} className="flex items-center flex-shrink-0">
-                  <div className="flex items-center">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                        step.id < currentStep
-                          ? "bg-indigo-600 text-white"
-                          : step.id === currentStep
-                            ? "bg-indigo-600 text-white"
-                            : "bg-gray-200 text-gray-600"
-                      }`}
-                    >
-                      {step.id < currentStep ? (
-                        <CheckIcon className="w-4 h-4" />
-                      ) : (
-                        step.id
-                      )}
-                    </div>
-                    <div className="ml-2 min-w-0">
-                      <div className="text-xs font-medium text-gray-900 truncate">
-                        {step.title}
-                      </div>
-                      <div className="text-xs text-gray-500 truncate">
-                        {step.description}
-                      </div>
-                    </div>
-                  </div>
-                  {index < steps.length - 1 && (
-                    <div
-                      className={`w-8 h-0.5 mx-2 flex-shrink-0 ${
-                        step.id < currentStep ? "bg-indigo-600" : "bg-gray-200"
-                      }`}
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Step Content */}
-        <div className="bg-white rounded-lg shadow p-6">{renderStep()}</div>
-
-        {/* Footer */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-500">
-            Already have an account?{" "}
-            <Link
-              href="/login"
-              className="text-indigo-600 hover:text-indigo-500"
-            >
-              Sign in
-            </Link>
-          </p>
+          {/* Step content */}
+          <div className="flex-1">{renderStep()}</div>
         </div>
       </div>
     </div>

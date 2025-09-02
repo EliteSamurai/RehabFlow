@@ -27,17 +27,10 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
 
         setUser(user);
 
-        // Handle redirects based on auth state
-        // Allow unauthenticated access to login page only
-        if (!user && pathname !== "/login") {
-          // Don't redirect, just set user to null and show content
-          setUser(null);
-        } else if (user && pathname === "/login") {
-          router.push("/");
-        }
+        // Remove conflicting redirect logic - let individual pages handle their own redirects
+        // The login page will handle redirecting to dashboard on successful login
       } catch (error) {
         console.error("Auth check error:", error);
-        // Don't redirect on auth errors, just set user to null
         setUser(null);
       } finally {
         setLoading(false);
@@ -46,21 +39,16 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
 
     checkAuth();
 
-    // Set up auth state listener
+    // Set up auth state listener - only for updating user state, not redirects
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       setUser(session?.user ?? null);
-
-      // Only redirect on explicit sign in/out events, not on page load
-      if (event === "SIGNED_IN" && pathname === "/login") {
-        router.push("/dashboard");
-      }
-      // Don't redirect on sign out - let users stay on current page
+      // Remove redirect logic from here - let pages handle their own redirects
     });
 
     return () => subscription.unsubscribe();
-  }, [router, pathname]);
+  }, [router]); // Remove pathname dependency to prevent re-runs
 
   if (loading) {
     return (
@@ -75,10 +63,24 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
     return <>{children}</>;
   }
 
-  // Allow access to all pages, but show sidebar only when authenticated
+  // Define protected routes that should show sidebar for authenticated users
+  const protectedRoutes = [
+    "/dashboard",
+    "/patients",
+    "/appointments",
+    "/billing",
+    "/settings",
+    "/campaigns",
+    "/analytics",
+    "/admin",
+    "/templates", // Add templates route
+  ];
+  const isProtectedRoute = protectedRoutes.some((route) =>
+    pathname.startsWith(route)
+  );
 
-  // Render with sidebar only for authenticated users
-  if (user) {
+  // Show sidebar only for authenticated users on protected routes
+  if (user && isProtectedRoute) {
     return (
       <div className="flex h-screen bg-gray-100">
         <Sidebar />
@@ -87,6 +89,8 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
     );
   }
 
-  // Render without sidebar for unauthenticated users
+  // Render without sidebar for:
+  // - Unauthenticated users
+  // - Authenticated users on public pages (like home page)
   return <>{children}</>;
 }

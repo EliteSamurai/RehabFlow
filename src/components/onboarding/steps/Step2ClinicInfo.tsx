@@ -54,7 +54,6 @@ export default function Step2ClinicInfo({ data, onNext, onBack }: Step2Props) {
     defaultValues: data,
   });
 
-  const watchedSpecialty = watch("specialty");
   const watchedTimezone = watch("timezone");
 
   const onSubmit = (formData: ClinicInfoData) => {

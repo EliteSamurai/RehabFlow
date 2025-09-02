@@ -32,6 +32,11 @@ const twilioInboundSchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
+    // Add test mode short-circuit
+    if (process.env.TEST_MODE === "1") {
+      return NextResponse.json({ ok: true, testMode: true }, { status: 200 });
+    }
+
     // Parse form data (Twilio sends form-encoded data)
     const formData = await request.formData();
     const data: Record<string, string> = {};

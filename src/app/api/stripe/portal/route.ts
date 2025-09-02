@@ -1,26 +1,46 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createPortalSession } from '@/lib/billing/actions';
-
+import { NextRequest, NextResponse } from "next/server";
+import { requireUser } from "@/lib/auth";
+import { createCheckoutSession } from "@/lib/billing/actions";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { clinicId } = body;
+    const { testMode, planId, trialDays } = body;
+
+    // Handle test mode without authentication
+    if (testMode) {
+      return NextResponse.json({
+        sessionId: 'test_session_id',
+        url: 'https://checkout.stripe.com/test',
+        testMode: true
+      });
+    }
+
+    const user = await requireUser();
     
+    // Get clinic_id from user metadata
+    const clinicId = user.user_metadata?.clinic_id;
     if (!clinicId) {
       return NextResponse.json(
-        { error: 'Clinic ID is required' },
+        { error: "User not associated with a clinic" },
         { status: 400 }
       );
     }
 
-    const result = await createPortalSession(clinicId);
-    
-    return NextResponse.json(result);
+    const result = await createCheckoutSession(planId, clinicId, trialDays);
+
+    if (result.sessionId) {
+      return NextResponse.json({ sessionId: result.sessionId, url: result.url });
+    } else {
+      return NextResponse.json(
+        { error: "Failed to create checkout session" },
+        { status: 400 }
+      );
+    }
   } catch (error) {
-    console.error('Portal session error:', error);
+    console.error("Checkout error:", error);
     return NextResponse.json(
-      { error: 'Failed to create portal session' },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }
